@@ -1,0 +1,3949 @@
+From 1fa36f82eb18272d5aebe35a35094af33c3f5fd3 Mon Sep 17 00:00:00 2001
+Date: Thu, 27 Sep 2018 18:25:22 +0800
+Subject: [PATCH] with_vnc
+
+---
+ external/ip_config/Android.mk                      |   2 +-
+ external/ip_config/main.cpp                        |   1 +
+ external/libvncserver/Android.mk                   |  18 +-
+ external/libvncserver/libvncserver/main.c          |  70 +-
+ external/libvncserver/libvncserver/rfbserver.c     |  20 +-
+ external/libvncserver/libvncserver/tight.c         | 774 ++++++++++++++++-----
+ external/libvncserver/others/anbox/anbox_input.cpp | 105 +++
+ external/libvncserver/others/anbox/anbox_input.h   |  25 +
+ external/libvncserver/others/anbox/device.cpp      | 128 ++++
+ external/libvncserver/others/anbox/device.h        |  83 +++
+ .../others/anbox/local_socket_connection.cpp       | 124 ++++
+ .../others/anbox/local_socket_connection.h         |  41 ++
+ external/libvncserver/others/common.h              |  90 +++
+ external/libvncserver/others/gui.c                 | 126 ++++
+ external/libvncserver/others/gui.h                 |  41 ++
+ external/libvncserver/others/input.c               | 433 ++++++++++++
+ external/libvncserver/others/input.h               |  38 +
+ external/libvncserver/others/linux/uinput.h        | 197 ++++++
+ external/libvncserver/others/screenFormat.h        |  31 +
+ external/libvncserver/others/suinput/suinput.c     | 215 ++++++
+ external/libvncserver/others/suinput/suinput.h     |  95 +++
+ external/libvncserver/rfb/rfb.h                    |  20 +-
+ hardware/libhardware/modules/gralloc/Android.mk    |  20 +-
+ .../libhardware/modules/gralloc/framebuffer.cpp    |  12 +-
+ hardware/libhardware/modules/gralloc/vncserver.c   | 283 ++++++++
+ vendor/anbox/scripts/anbox-init.sh                 |   4 +-
+ 26 files changed, 2798 insertions(+), 198 deletions(-)
+ mode change 100644 => 100755 external/libvncserver/Android.mk
+ mode change 100644 => 100755 external/libvncserver/libvncserver/main.c
+ mode change 100644 => 100755 external/libvncserver/libvncserver/rfbserver.c
+ mode change 100644 => 100755 external/libvncserver/libvncserver/tight.c
+ create mode 100755 external/libvncserver/others/anbox/anbox_input.cpp
+ create mode 100755 external/libvncserver/others/anbox/anbox_input.h
+ create mode 100755 external/libvncserver/others/anbox/device.cpp
+ create mode 100755 external/libvncserver/others/anbox/device.h
+ create mode 100755 external/libvncserver/others/anbox/local_socket_connection.cpp
+ create mode 100755 external/libvncserver/others/anbox/local_socket_connection.h
+ create mode 100755 external/libvncserver/others/common.h
+ create mode 100755 external/libvncserver/others/gui.c
+ create mode 100755 external/libvncserver/others/gui.h
+ create mode 100755 external/libvncserver/others/input.c
+ create mode 100755 external/libvncserver/others/input.h
+ create mode 100755 external/libvncserver/others/linux/uinput.h
+ create mode 100644 external/libvncserver/others/screenFormat.h
+ create mode 100755 external/libvncserver/others/suinput/suinput.c
+ create mode 100755 external/libvncserver/others/suinput/suinput.h
+ mode change 100644 => 100755 external/libvncserver/rfb/rfb.h
+ create mode 100644 hardware/libhardware/modules/gralloc/vncserver.c
+
+diff --git a/external/ip_config/Android.mk b/external/ip_config/Android.mk
+index edbeaad..cbf0646 100644
+--- a/external/ip_config/Android.mk
++++ b/external/ip_config/Android.mk
+@@ -14,7 +14,7 @@ LOCAL_SRC_FILES := binary_writer.cpp ip_config_builder.cpp main.cpp
+ LOCAL_C_INCLUDES += $(LOCAL_PATH)
+ 
+ LOCAL_MODULE := ip_config
+-LOCAL_MODULE_PATH :=$(TARGET_ROOT_OUT)
++#LOCAL_MODULE_PATH :=$(TARGET_ROOT_OUT)
+ LOCAL_MODULE_TAGS := optional
+ LOCAL_SHARED_LIBRARIES :=
+ LOCAL_C_INCLUDES := $(INCLUDES)
+diff --git a/external/ip_config/main.cpp b/external/ip_config/main.cpp
+index 0c6c3d3..76ed83a 100644
+--- a/external/ip_config/main.cpp
++++ b/external/ip_config/main.cpp
+@@ -41,6 +41,7 @@ int main(int argc, char *argv[])
+ 			std::cout << "mkdir /data/misc/ethernet error" << std::endl;
+ 	} else {
+ 		std::cout << "/data/misc/ethernet exsit" << std::endl;
++                //return -1;
+ 	}
+ 
+ 	const std::string ip_conf_path("/data/misc/ethernet/ipconfig.txt");
+diff --git a/external/libvncserver/Android.mk b/external/libvncserver/Android.mk
+old mode 100644
+new mode 100755
+index 3f4197f..8e2faa9
+--- a/external/libvncserver/Android.mk
++++ b/external/libvncserver/Android.mk
+@@ -7,7 +7,13 @@ LOCAL_C_INCLUDES += $(LOCAL_PATH)/include \
+                     $(LOCAL_PATH)/libvncserver \
+                     $(LOCAL_PATH) \
+                     $(LOCAL_PATH)/common \
+-                    external/jpeg
++                    $(LOCAL_PATH)/others \
++                    $(LOCAL_PATH)/others/suinput \
++                    $(LOCAL_PATH)/others/linux \
++                    $(LOCAL_PATH)/others/anbox \
++                    external/jpeg 
++
++LOCAL_EXPORT_C_INCLUDES += $(LOCAL_C_INCLUDES)
+ 
+ LOCAL_SRC_FILES := libvncserver/auth.c \
+                    libvncserver/cargs.c \
+@@ -41,10 +47,16 @@ LOCAL_SRC_FILES := libvncserver/auth.c \
+                    common/sha1.c \
+                    common/turbojpeg.c \
+                    common/vncauth.c \
+-                   test/bmp.c
++                   test/bmp.c \
++                   others/suinput/suinput.c \
++                   others/gui.c \
++                   others/input.c \
++                   others/anbox/anbox_input.cpp \
++                   others/anbox/device.cpp \
++                   others/anbox/local_socket_connection.cpp
+ 
+ LOCAL_STATIC_LIBRARIES := libz libpng libjpeg_static libssl_static
+-LOCAL_CFLAGS := -D__ANDROID__ -DHAVE_LIBSSL -DWITH_WEBSOCKETS
++LOCAL_CFLAGS := -DLOG_TAG=\"VNCserver\" -D__ANDROID__ -DHAVE_LIBSSL -DWITH_WEBSOCKETS
+ 
+ #LOCAL_SDK_VERSION := 14
+ 
+diff --git a/external/libvncserver/libvncserver/main.c b/external/libvncserver/libvncserver/main.c
+old mode 100644
+new mode 100755
+index 9839c85..53b4fcd
+--- a/external/libvncserver/libvncserver/main.c
++++ b/external/libvncserver/libvncserver/main.c
+@@ -256,6 +256,30 @@ rfbDefaultLog(const char *format, ...)
+     UNLOCK(logMutex);
+ }
+ 
++#ifdef __ANDROID__
++static void
++rfbDefaultLogAndroid()
++{
++    if(!rfbEnableLogging)
++      return;
++
++    if (! logMutex_initialized) {
++      INIT_MUTEX(logMutex);
++      logMutex_initialized = 1;
++    }
++
++    LOCK(logMutex);
++    
++    UNLOCK(logMutex);
++}
++
++void rfbLogPerror(const char *str)
++{
++    ALOGE("%s: %s\n", str, strerror(errno));
++}
++
++#else
++
+ rfbLogProc rfbLog=rfbDefaultLog;
+ rfbLogProc rfbErr=rfbDefaultLog;
+ 
+@@ -263,6 +287,7 @@ void rfbLogPerror(const char *str)
+ {
+     rfbErr("%s: %s\n", str, strerror(errno));
+ }
++#endif
+ 
+ void rfbScheduleCopyRegion(rfbScreenInfoPtr rfbScreen,sraRegionPtr copyRegion,int dx,int dy)
+ {  
+@@ -460,9 +485,16 @@ clientOutput(void *data)
+ 		}
+ 
+ 		LOCK(cl->updateMutex);
++		
++        if(sraRgnEmpty(cl->requestedRegion))
++        {          
++            sraRegionPtr tmpRegion = sraRgnCreateRect(0, 0,  cl->scaledScreen->width, cl->scaledScreen->height);
++            sraRgnOr(cl->requestedRegion,tmpRegion);
++            sraRgnDestroy(tmpRegion);
++        }
+ 
+ 		if (sraRgnEmpty(cl->requestedRegion)) {
+-			; /* always require a FB Update Request (otherwise can crash.) */
++			rfbLog("cl->requestedRegion is NULL\n"); /* always require a FB Update Request (otherwise can crash.) */
+ 		} else {
+ 			haveUpdate = FB_UPDATE_PENDING(cl);
+ 			if(!haveUpdate) {
+@@ -481,7 +513,8 @@ clientOutput(void *data)
+         
+         /* OK, now, to save bandwidth, wait a little while for more
+            updates to come along. */
+-        usleep(cl->screen->deferUpdateTime * 1000);
++        //rfbLog("cl->screen->deferUpdateTime:%d \n", cl->screen->deferUpdateTime);
++        //usleep(cl->screen->deferUpdateTime * 1000);
+ 
+         /* Now, get the region we're going to update, and remove
+            it from cl->modifiedRegion _before_ we send the update.
+@@ -1127,6 +1160,7 @@ rfbUpdateClient(rfbClientPtr cl)
+   rfbBool result=FALSE;
+   rfbScreenInfoPtr screen = cl->screen;
+ 
++#if 0
+   if (cl->sock >= 0 && !cl->onHold && FB_UPDATE_PENDING(cl) &&
+         !sraRgnEmpty(cl->requestedRegion)) {
+       result=TRUE;
+@@ -1145,8 +1179,40 @@ rfbUpdateClient(rfbClientPtr cl)
+           cl->startDeferring.tv_usec = 0;
+           rfbSendFramebufferUpdate(cl,cl->modifiedRegion);
+         }
++        else
++        {
++             rfbLog("rfbUpdateClient Empty update miss !!!\n");
++        }
+       }
+     }
++#else
++    
++    if (cl->sock >= 0 && !cl->onHold && FB_UPDATE_PENDING(cl))
++    {
++        if(sraRgnEmpty(cl->requestedRegion))
++        {
++            
++            for (rfbStatList *ptr = cl->statMsgList; ptr!=NULL; ptr=ptr->Next)
++            {
++                if(ptr->type == rfbFramebufferUpdate && ptr->sentCount)
++                {
++                    LOCK(cl->updateMutex);
++                    sraRegionPtr tmpRegion = sraRgnCreateRect(0, 0,  cl->scaledScreen->width, cl->scaledScreen->height);
++                    sraRgnOr(cl->requestedRegion,tmpRegion);
++                    sraRgnDestroy(tmpRegion);
++                    UNLOCK(cl->updateMutex);
++                    break;
++                }
++            }
++        }
++
++        rfbSendFramebufferUpdate(cl,cl->modifiedRegion);
++    }
++    else
++    {
++        rfbLog("Miss frame: %d %d %d \n", cl->sock, !cl->onHold, FB_UPDATE_PENDING(cl));
++    }
++#endif
+ 
+     if (!cl->viewOnly && cl->lastPtrX >= 0) {
+       if(cl->startPtrDeferring.tv_usec == 0) {
+diff --git a/external/libvncserver/libvncserver/rfbserver.c b/external/libvncserver/libvncserver/rfbserver.c
+old mode 100644
+new mode 100755
+index f1c7c94..a1d585f
+--- a/external/libvncserver/libvncserver/rfbserver.c
++++ b/external/libvncserver/libvncserver/rfbserver.c
+@@ -379,7 +379,7 @@ rfbNewTCPOrUDPClient(rfbScreenInfoPtr rfbScreen,
+       cl->reverseConnection = FALSE;
+       cl->readyForSetColourMapEntries = FALSE;
+       cl->useCopyRect = FALSE;
+-      cl->preferredEncoding = -1;
++      cl->preferredEncoding = rfbEncodingTight;
+       cl->correMaxWidth = 48;
+       cl->correMaxHeight = 48;
+ #ifdef LIBVNCSERVER_HAVE_LIBZ
+@@ -681,6 +681,20 @@ rfbProcessClientProtocolVersion(rfbClientPtr cl)
+     }
+     rfbLog("Client Protocol Version %d.%d\n", major_, minor_);
+ 
++    if(minor_ == 9)
++    {
++        /*
++        this mean client is tizen client, supoort alpha
++        */
++        rfbLog("Client is tizen client, support alpha \n");
++        cl->supportAlpha = 1;
++        minor_ = 8;
++    }
++    else
++    {
++        rfbLog("Client is normal client\n");
++    }
++
+     if (major_ != rfbProtocolMajorVersion) {
+         rfbErr("RFB protocol version mismatch - server %d.%d, client %d.%d",
+                 cl->screen->protocolMajorVersion, cl->screen->protocolMinorVersion,
+@@ -2082,7 +2096,7 @@ rfbProcessClientNormalMessage(rfbClientPtr cl)
+             lastPreferredEncoding = cl->preferredEncoding;
+ 
+         /* Reset all flags to defaults (allows us to switch between PointerPos and Server Drawn Cursors) */
+-        cl->preferredEncoding=-1;
++        cl->preferredEncoding= rfbEncodingTight;
+         cl->useCopyRect              = FALSE;
+         cl->useNewFBSize             = FALSE;
+         cl->cursorWasChanged         = FALSE;
+@@ -2308,7 +2322,7 @@ rfbProcessClientNormalMessage(rfbClientPtr cl)
+ 
+         if (cl->preferredEncoding == -1) {
+             if (lastPreferredEncoding==-1) {
+-                cl->preferredEncoding = rfbEncodingRaw;
++                cl->preferredEncoding = rfbEncodingTight;
+                 rfbLog("Defaulting to %s encoding for client %s\n", encodingName(cl->preferredEncoding,encBuf,sizeof(encBuf)),cl->host);
+             }
+             else {
+diff --git a/external/libvncserver/libvncserver/tight.c b/external/libvncserver/libvncserver/tight.c
+old mode 100644
+new mode 100755
+index 276a2e3..5de1cfd
+--- a/external/libvncserver/libvncserver/tight.c
++++ b/external/libvncserver/libvncserver/tight.c
+@@ -42,7 +42,7 @@
+ #include <png.h>
+ #endif
+ #include "turbojpeg.h"
+-
++#include <pthread.h>
+ 
+ /* Note: The following constant should not be changed. */
+ #define TIGHT_MIN_TO_COMPRESS 12
+@@ -52,6 +52,9 @@
+ #define MIN_SOLID_SUBRECT_SIZE  2048
+ #define MAX_SPLIT_TILE_SIZE       16
+ 
++
++#define IMAGE_ONLY 1
++
+ /*
+  * There is so much access of the Tight encoding static data buffers
+  * that we resort to using thread local storage instead of having
+@@ -81,10 +84,10 @@ typedef struct TIGHT_CONF_s {
+ } TIGHT_CONF;
+ 
+ static TIGHT_CONF tightConf[4] = {
+-    { 65536, 2048,   6, 0, 0, 0,   4, 24 }, /* 0  (used only without JPEG) */
+-    { 65536, 2048,  32, 1, 1, 1,  96, 24 }, /* 1 */
+-    { 65536, 2048,  32, 3, 3, 2,  96, 96 }, /* 2  (used only with JPEG) */
+-    { 65536, 2048,  32, 7, 7, 5,  96, 256 } /* 9 */
++    { 259200, 2048,   6, 0, 0, 0,   4, 24 }, /* 0  (used only without JPEG) */
++    { 259200, 2048,  32, 1, 1, 1,  96, 24 }, /* 1 */
++    { 259200, 2048,  32, 3, 3, 2,  96, 96 }, /* 2  (used only with JPEG) */
++    { 259200, 2048,  32, 7, 7, 5,  96, 256 } /* 9 */
+ };
+ 
+ #ifdef LIBVNCSERVER_HAVE_LIBPNG
+@@ -163,13 +166,44 @@ void rfbTightCleanup (rfbScreenInfoPtr screen)
+         tightAfterBufSize = 0;
+         tightAfterBuf = NULL;
+     }
+-    if (j) tjDestroy(j);
++	if (j) {
++		tjDestroy(j);
++		/* Set freed resource handle to 0! */
++		j = 0;
++	}
+ }
+-
++/* Globals for multi-threading */
++#define TVNC_MAXTHREADS 8
++
++static rfbBool threadInit = FALSE;
++static int _nt;
++static pthread_t thnd[TVNC_MAXTHREADS] = {0, 0, 0, 0, 0, 0, 0, 0};
++
++typedef struct _threadparam {
++    rfbClientPtr cl;
++    int x, y, w, h, id, _ublen, *ublen;
++    char *tightBeforeBuf;
++    int tightBeforeBufSize;
++    char *tightAfterBuf;
++    int tightAfterBufSize;
++    char *updateBuf;
++    int updateBufSize;
++    int paletteNumColors, paletteMaxColors;
++    uint32_t monoBackground, monoForeground;
++    PALETTE palette;
++    tjhandle j;
++    int bytessent, rectsent;
++    int streamId, baseStreamId, nStreams;
++    pthread_mutex_t ready, done;
++    rfbBool status, deadyet;
++    int turboFlag;
++} threadparam;
++
++static threadparam tparam[TVNC_MAXTHREADS];
+ 
+ /* Prototypes for static functions. */
+ 
+-static rfbBool SendRectEncodingTight(rfbClientPtr cl, int x, int y,
++static rfbBool SendRectEncodingTight(threadparam *t, int x, int y,
+                                      int w, int h);
+ static void FindBestSolidArea (rfbClientPtr cl, int x, int y, int w, int h,
+                                uint32_t colorValue, int *w_ptr, int *h_ptr);
+@@ -185,32 +219,32 @@ static rfbBool CheckSolidTile16  (rfbClientPtr cl, int x, int y, int w, int h,
+ static rfbBool CheckSolidTile32  (rfbClientPtr cl, int x, int y, int w, int h,
+                                   uint32_t *colorPtr, rfbBool needSameColor);
+ 
+-static rfbBool SendRectSimple    (rfbClientPtr cl, int x, int y, int w, int h);
+-static rfbBool SendSubrect       (rfbClientPtr cl, int x, int y, int w, int h);
+-static rfbBool SendTightHeader   (rfbClientPtr cl, int x, int y, int w, int h);
++static rfbBool SendRectSimple    (threadparam *t, int x, int y, int w, int h);
++static rfbBool SendSubrect       (threadparam *t, int x, int y, int w, int h);
++static rfbBool SendTightHeader   (threadparam *t, int x, int y, int w, int h);
+ 
+-static rfbBool SendSolidRect     (rfbClientPtr cl);
+-static rfbBool SendMonoRect      (rfbClientPtr cl, int x, int y, int w, int h);
+-static rfbBool SendIndexedRect   (rfbClientPtr cl, int x, int y, int w, int h);
+-static rfbBool SendFullColorRect (rfbClientPtr cl, int x, int y, int w, int h);
++static rfbBool SendSolidRect     (threadparam *t);
++static rfbBool SendMonoRect      (threadparam *t, int x, int y, int w, int h);
++static rfbBool SendIndexedRect   (threadparam *t, int x, int y, int w, int h);
++static rfbBool SendFullColorRect (threadparam *t, int x, int y, int w, int h);
+ 
+-static rfbBool CompressData (rfbClientPtr cl, int streamId, int dataLen,
++static rfbBool CompressData (threadparam *t, int streamId, int dataLen,
+                              int zlibLevel, int zlibStrategy);
+-static rfbBool SendCompressedData (rfbClientPtr cl, char *buf,
++static rfbBool SendCompressedData (threadparam *t, char *buf,
+                                    int compressedLen);
+ 
+ static void FillPalette8 (int count);
+ static void FillPalette16 (int count);
+ static void FillPalette32 (int count);
+-static void FastFillPalette16 (rfbClientPtr cl, uint16_t *data, int w,
++static void FastFillPalette16 (threadparam *t, uint16_t *data, int w,
+                                int pitch, int h);
+-static void FastFillPalette32 (rfbClientPtr cl, uint32_t *data, int w,
++static void FastFillPalette32 (threadparam *t, uint32_t *data, int w,
+                                int pitch, int h);
+ 
+ static void PaletteReset (void);
+ static int PaletteInsert (uint32_t rgb, int numPixels, int bpp);
+ 
+-static void Pack24 (rfbClientPtr cl, char *buf, rfbPixelFormat *fmt,
++static void Pack24 (threadparam *t, char *buf, rfbPixelFormat *fmt,
+                     int count);
+ 
+ static void EncodeIndexedRect16 (uint8_t *buf, int count);
+@@ -220,18 +254,20 @@ static void EncodeMonoRect8 (uint8_t *buf, int w, int h);
+ static void EncodeMonoRect16 (uint8_t *buf, int w, int h);
+ static void EncodeMonoRect32 (uint8_t *buf, int w, int h);
+ 
+-static rfbBool SendJpegRect (rfbClientPtr cl, int x, int y, int w, int h,
++static rfbBool SendJpegRect (threadparam *t, int x, int y, int w, int h,
+                              int quality);
+-static void PrepareRowForImg(rfbClientPtr cl, uint8_t *dst, int x, int y, int count);
+-static void PrepareRowForImg24(rfbClientPtr cl, uint8_t *dst, int x, int y, int count);
+-static void PrepareRowForImg16(rfbClientPtr cl, uint8_t *dst, int x, int y, int count);
+-static void PrepareRowForImg32(rfbClientPtr cl, uint8_t *dst, int x, int y, int count);
++static void PrepareRowForImg(threadparam *t, uint8_t *dst, int x, int y, int count);
++static void PrepareRowForImg24(threadparam *t, uint8_t *dst, int x, int y, int count);
++static void PrepareRowForImg16(threadparam *t, uint8_t *dst, int x, int y, int count);
++static void PrepareRowForImg32(threadparam *t, uint8_t *dst, int x, int y, int count);
+ 
+ #ifdef LIBVNCSERVER_HAVE_LIBPNG
+-static rfbBool SendPngRect(rfbClientPtr cl, int x, int y, int w, int h);
+-static rfbBool CanSendPngRect(rfbClientPtr cl, int w, int h);
++static rfbBool SendPngRect(threadparam *t, int x, int y, int w, int h);
++static rfbBool CanSendPngRect(threadparam *t, int w, int h);
+ #endif
++static void *TightThreadFunc(void *param);
+ 
++#define min(x,y) ((x)<(y)?(x):(y))
+ /*
+  * Tight encoding implementation.
+  */
+@@ -264,6 +300,135 @@ rfbNumCodedRectsTight(rfbClientPtr cl,
+     }
+ }
+ 
++static int
++nthreads(void)
++{
++    char *mtenv = getenv("TVNC_MT");
++    char *ntenv = getenv("TVNC_NTHREADS");
++    int np = 4, nt = 0;
++    rfbLog("np:%d, nt:%d \n", np, nt);
++    if (!mtenv || strlen(mtenv) < 1 || strcmp(mtenv, "1"))
++    {
++    	np = min(np, TVNC_MAXTHREADS);
++        return np;
++    }
++    else
++    	rfbLog(" 1 np %d, nt %d \n", np, nt);
++    if (np == -1) np = 1;
++    np = min(np, TVNC_MAXTHREADS);
++    if (ntenv && strlen(ntenv) > 0) nt = atoi(ntenv);
++    rfbLog(" 2 np%d, nt%d \n", np, nt);
++    if (nt >= 1 && nt <= np) return nt;
++    else return np;
++}
++
++static void
++InitThreads(rfbClientPtr cl)
++{
++    int err = 0, i;
++    if (threadInit) return;
++
++    _nt = nthreads();
++    memset(tparam, 0, sizeof(threadparam) * TVNC_MAXTHREADS);
++	tparam[0].id = 0;
++    tparam[0].ublen = &cl->ublen;
++    tparam[0].updateBuf = cl->updateBuf;
++    tparam[0].status = TRUE;
++    for (i = 1; i < TVNC_MAXTHREADS; i++) {
++        tparam[i].id = i;
++    	tparam[i]._ublen = 0;
++        tparam[i].ublen = &tparam[i]._ublen;
++    }
++    rfbLog("Using %d thread%s for Tight encoding\n", _nt,
++           _nt == 1 ? "" : "s");
++    if (_nt > 1) {
++        for (i = 1; i < _nt; i++) {
++            if (!tparam[i].updateBuf) {
++                tparam[i].updateBufSize = UPDATE_BUF_SIZE;
++                tparam[i].updateBuf = (char *)malloc(tparam[i].updateBufSize);
++            }
++            tparam[i].status = TRUE;
++            pthread_mutex_init(&tparam[i].ready, NULL);
++            pthread_mutex_lock(&tparam[i].ready);
++            pthread_mutex_init(&tparam[i].done, NULL);
++            pthread_mutex_lock(&tparam[i].done);
++            if ((err = pthread_create(&thnd[i], NULL, TightThreadFunc,
++                                      &tparam[i])) != 0) {
++                rfbLog ("Could not start thread %d: %s\n", i + 1);
++                return;
++            }
++        }
++    }
++    threadInit = TRUE;
++}
++
++void
++ShutdownTightThreads(void)
++{
++    int i;
++    if (!threadInit) return;
++    if (_nt > 1) {
++        for (i = 1; i < _nt; i++) {
++            if (thnd[i]) {
++                tparam[i].deadyet = TRUE;
++                pthread_mutex_unlock(&tparam[i].ready);
++                pthread_join(thnd[i], NULL);
++                thnd[i] = 0;
++                pthread_mutex_destroy(&tparam[i].ready);
++                pthread_mutex_destroy(&tparam[i].done);
++            }
++        }
++    }
++    for (i = 0; i < _nt; i++) {
++        if (tparam[i].tightAfterBuf) free(tparam[i].tightAfterBuf);
++        if (tparam[i].tightBeforeBuf) free(tparam[i].tightBeforeBuf);
++        if (i != 0 && tparam[i].updateBuf) free(tparam[i].updateBuf);
++        if (tparam[i].j) tjDestroy(tparam[i].j);
++/*        if (!REGION_NAR(&tparam[i].losslessRegion))
++            REGION_UNINIT(pScreen, &tparam[i].losslessRegion);
++        if (!REGION_NAR(&tparam[i].lossyRegion))
++            REGION_UNINIT(pScreen, &tparam[i].lossyRegion);*/
++        memset(&tparam[i], 0, sizeof(threadparam));
++    }
++    threadInit = FALSE;
++}
++
++static void *
++TightThreadFunc(void *param)
++{
++    threadparam *t = (threadparam *)param;
++    while (!t->deadyet && t->status) {
++        pthread_mutex_lock(&t->ready);
++        if (t->deadyet) break;
++        t->status = SendRectEncodingTight(t, t->x, t->y, t->w, t->h);
++        pthread_mutex_unlock(&t->done);
++    }
++    /* do not use t->cl again, because it may be the old and free now OR it is not used so the cl is null*/
++    rfbLog("TightThreadFunc TightThread:%d exit!.\n", t->id);
++    return NULL;
++}
++
++static rfbBool
++CheckUpdateBuf(threadparam *t, int bytes)
++{
++    rfbClientPtr cl = t->cl;
++    if (t->id == 0) {
++        if ((*t->ublen) + bytes > UPDATE_BUF_SIZE) {
++            if (!rfbSendUpdateBuf(cl))
++                return FALSE;
++        }
++    }
++    else {
++        if ((*t->ublen) + bytes > t->updateBufSize) {
++            t->updateBufSize += UPDATE_BUF_SIZE;
++            t->updateBuf = (char *)realloc(t->updateBuf, t->updateBufSize);
++        }
++    }
++    return TRUE;
++}
++
++#define GAP(start, end) ((end.tv_sec-start.tv_sec)*1000.0 + (end.tv_usec-start.tv_usec)/1000.0)
++
+ rfbBool
+ rfbSendRectEncodingTight(rfbClientPtr cl,
+                          int x,
+@@ -271,8 +436,87 @@ rfbSendRectEncodingTight(rfbClientPtr cl,
+                          int w,
+                          int h)
+ {
++    rfbBool status = TRUE;
++    int i, nt;
++    
++    struct timeval start_1,end_1;
++    gettimeofday(&start_1,NULL);
++
++    if (!threadInit) {
++        InitThreads(cl);
++        if (!threadInit) return FALSE;
++    }
++
+     cl->tightEncoding = rfbEncodingTight;
+-    return SendRectEncodingTight(cl, x, y, w, h);
++    
++    rfbSendUpdateBuf(cl);
++
++    nt = min(_nt, w * h / tightConf[compressLevel].maxRectSize);
++    if (nt < 1) nt = 1;
++
++    #if 0
++	rfbLog("rfbSendRectEncodingTight use threads:%d _nt:%d tiled:%d \n w:%d h:%d maxsize:%d\n", nt, _nt, w * h / tightConf[compressLevel].maxRectSize
++					,w,h,tightConf[compressLevel].maxRectSize);
++	#endif
++	
++    for (i = 0; i < nt; i++) {
++        tparam[i].status = TRUE;
++        tparam[i].cl = cl;
++        tparam[i].x = x;
++        tparam[i].y = h / nt * i + y;
++        tparam[i].w = w;
++        tparam[i].h = (i == nt - 1) ? (h - (h / nt * i)) : h / nt;
++        tparam[i].bytessent = tparam[i].rectsent = 0;
++		tparam[i].turboFlag = 0; //TODO:: OPT
++
++        if (i < 4) {
++            int n = min(nt, 4);
++            tparam[i].baseStreamId = 4 / n * i;
++            if (i == n - 1) tparam[i].nStreams = 4 - tparam[i].baseStreamId;
++            else tparam[i].nStreams = 4 / n;
++            tparam[i].streamId = tparam[i].baseStreamId;
++        }
++    }
++    if (nt > 1) {
++        for (i = 1; i < nt; i++) pthread_mutex_unlock(&tparam[i].ready);
++    }
++
++    status &= SendRectEncodingTight(&tparam[0], tparam[0].x, tparam[0].y,
++                                    tparam[0].w, tparam[0].h);
++    if (!status) return FALSE;
++    if (cl->ublen > 0) {
++	    if (!rfbSendUpdateBuf(cl)) {
++	        return FALSE;
++	    }
++	}
++
++    if (nt > 1) {
++        for (i = 1; i < nt; i++) {
++            pthread_mutex_lock (&tparam[i].done);
++            status &= tparam[i].status;
++        }
++        if (status == FALSE) return FALSE;
++
++        for (i = 1; i < nt; i++) {
++            if ((*tparam[i].ublen) > 0 &&
++                rfbWriteExact(cl, tparam[i].updateBuf, *tparam[i].ublen) < 0) {
++                rfbLogPerror("rfbSendRectEncodingTight: write");
++                rfbCloseClient(cl);
++                return FALSE;
++            }
++            (*tparam[i].ublen) = 0;
++        }
++    }
++#if 0
++    gettimeofday(&end_1,NULL);
++    float gap = GAP(start_1, end_1);
++    if(gap > 100.0)
++        rfbLog( "rfbSendRectEncodingTight %f ms \n", gap );
++#endif
++    return status;
++
++    
++    //return SendRectEncodingTight(cl, x, y, w, h);
+ }
+ 
+ rfbBool
+@@ -283,12 +527,12 @@ rfbSendRectEncodingTightPng(rfbClientPtr cl,
+                          int h)
+ {
+     cl->tightEncoding = rfbEncodingTightPng;
+-    return SendRectEncodingTight(cl, x, y, w, h);
++    return FALSE;//SendRectEncodingTight(cl, x, y, w, h);
+ }
+ 
+ 
+ rfbBool
+-SendRectEncodingTight(rfbClientPtr cl,
++SendRectEncodingTight(threadparam *t,
+                          int x,
+                          int y,
+                          int w,
+@@ -299,8 +543,7 @@ SendRectEncodingTight(rfbClientPtr cl,
+     int dx, dy, dw, dh;
+     int x_best, y_best, w_best, h_best;
+     char *fbptr;
+-
+-    rfbSendUpdateBuf(cl);
++    rfbClientPtr cl = t->cl;
+ 
+     compressLevel = cl->tightCompressLevel;
+     qualityLevel = cl->turboQualityLevel;
+@@ -340,17 +583,20 @@ SendRectEncodingTight(rfbClientPtr cl,
+     }
+ 
+     if (!cl->enableLastRectEncoding || w * h < MIN_SPLIT_RECT_SIZE)
+-        return SendRectSimple(cl, x, y, w, h);
++        return SendRectSimple(t, x, y, w, h);
++
++    //jpeg only by huiyue.cai
++    return SendRectSimple(t, x, y, w, h);
+ 
+     /* Make sure we can write at least one pixel into tightBeforeBuf. */
+ 
+-    if (tightBeforeBufSize < 4) {
+-        tightBeforeBufSize = 4;
+-        if (tightBeforeBuf == NULL)
+-            tightBeforeBuf = (char *)malloc(tightBeforeBufSize);
++    if (t->tightBeforeBufSize < 4) {
++        t->tightBeforeBufSize = 4;
++        if (t->tightBeforeBuf == NULL)
++            t->tightBeforeBuf = (char *)malloc(t->tightBeforeBufSize);
+         else
+-            tightBeforeBuf = (char *)realloc(tightBeforeBuf,
+-                                             tightBeforeBufSize);
++            t->tightBeforeBuf = (char *)realloc(t->tightBeforeBuf,
++                                                t->tightBeforeBufSize);
+     }
+ 
+     /* Calculate maximum number of rows in one non-solid rectangle. */
+@@ -371,7 +617,7 @@ SendRectEncodingTight(rfbClientPtr cl,
+         /* If a rectangle becomes too large, send its upper part now. */
+ 
+         if (dy - y >= nMaxRows) {
+-            if (!SendRectSimple(cl, x, y, w, nMaxRows))
++            if (!SendRectSimple(t, x, y, w, nMaxRows))
+                 return 0;
+             y += nMaxRows;
+             h -= nMaxRows;
+@@ -416,17 +662,17 @@ SendRectEncodingTight(rfbClientPtr cl,
+ 
+                 /* Send rectangles at top and left to solid-color area. */
+ 
+-                if ( y_best != y &&
+-                     !SendRectSimple(cl, x, y, w, y_best-y) )
++                if (y_best != y &&
++                    !SendRectSimple(t, x, y, w, y_best - y))
+                     return FALSE;
+-                if ( x_best != x &&
+-                     !SendRectEncodingTight(cl, x, y_best,
+-                                               x_best-x, h_best) )
++                if (x_best != x &&
++                    !SendRectEncodingTight(t, x, y_best,
++                                           x_best - x, h_best))
+                     return FALSE;
+ 
+                 /* Send solid-color rectangle. */
+ 
+-                if (!SendTightHeader(cl, x_best, y_best, w_best, h_best))
++                if (!SendTightHeader(t, x_best, y_best, w_best, h_best))
+                     return FALSE;
+ 
+                 fbptr = (cl->scaledScreen->frameBuffer +
+@@ -437,18 +683,18 @@ SendRectEncodingTight(rfbClientPtr cl,
+                                    &cl->format, fbptr, tightBeforeBuf,
+                                    cl->scaledScreen->paddedWidthInBytes, 1, 1);
+ 
+-                if (!SendSolidRect(cl))
++                if (!SendSolidRect(t))
+                     return FALSE;
+ 
+                 /* Send remaining rectangles (at right and bottom). */
+ 
+-                if ( x_best + w_best != x + w &&
+-                     !SendRectEncodingTight(cl, x_best + w_best, y_best,
+-                                               w - (x_best-x) - w_best, h_best) )
++                if (x_best + w_best != x + w &&
++                    !SendRectEncodingTight(t, x_best + w_best, y_best,
++                                           w - (x_best - x) - w_best, h_best))
+                     return FALSE;
+-                if ( y_best + h_best != y + h &&
+-                     !SendRectEncodingTight(cl, x, y_best + h_best,
+-                                               w, h - (y_best-y) - h_best) )
++                if (y_best + h_best != y + h &&
++                    !SendRectEncodingTight(t, x, y_best + h_best,
++                                           w, h - (y_best - y) - h_best))
+                     return FALSE;
+ 
+                 /* Return after all recursive calls are done. */
+@@ -462,7 +708,7 @@ SendRectEncodingTight(rfbClientPtr cl,
+ 
+     /* No suitable solid-color rectangles found. */
+ 
+-    return SendRectSimple(cl, x, y, w, h);
++    return SendRectSimple(t, x, y, w, h);
+ }
+ 
+ 
+@@ -559,7 +805,7 @@ ExtendSolidArea(rfbClientPtr cl,
+ /*
+  * Check if a rectangle is all of the same color. If needSameColor is
+  * set to non-zero, then also check that its color equals to the
+- * *colorPtr value. The result is 1 if the test is successfull, and in
++ * *colorPtr value. The result is 1 if the test is successful, and in
+  * that case new color will be stored in *colorPtr.
+  */
+ 
+@@ -611,13 +857,14 @@ DEFINE_CHECK_SOLID_FUNCTION(16)
+ DEFINE_CHECK_SOLID_FUNCTION(32)
+ 
+ static rfbBool
+-SendRectSimple(rfbClientPtr cl, int x, int y, int w, int h)
++SendRectSimple(threadparam *t, int x, int y, int w, int h)
+ {
+     int maxBeforeSize, maxAfterSize;
+     int maxRectSize, maxRectWidth;
+     int subrectMaxWidth, subrectMaxHeight;
+     int dx, dy;
+     int rw, rh;
++    rfbClientPtr cl = t->cl;
+ 
+     maxRectSize = tightConf[compressLevel].maxRectSize;
+     maxRectWidth = tightConf[compressLevel].maxRectWidth;
+@@ -625,22 +872,22 @@ SendRectSimple(rfbClientPtr cl, int x, int y, int w, int h)
+     maxBeforeSize = maxRectSize * (cl->format.bitsPerPixel / 8);
+     maxAfterSize = maxBeforeSize + (maxBeforeSize + 99) / 100 + 12;
+ 
+-    if (tightBeforeBufSize < maxBeforeSize) {
+-        tightBeforeBufSize = maxBeforeSize;
+-        if (tightBeforeBuf == NULL)
+-            tightBeforeBuf = (char *)malloc(tightBeforeBufSize);
++    if (t->tightBeforeBufSize < maxBeforeSize) {
++        t->tightBeforeBufSize = maxBeforeSize;
++        if (t->tightBeforeBuf == NULL)
++            t->tightBeforeBuf = (char *)malloc(t->tightBeforeBufSize);
+         else
+-            tightBeforeBuf = (char *)realloc(tightBeforeBuf,
+-                                             tightBeforeBufSize);
++            t->tightBeforeBuf = (char *)realloc(t->tightBeforeBuf,
++                                                t->tightBeforeBufSize);
+     }
+ 
+-    if (tightAfterBufSize < maxAfterSize) {
+-        tightAfterBufSize = maxAfterSize;
+-        if (tightAfterBuf == NULL)
+-            tightAfterBuf = (char *)malloc(tightAfterBufSize);
++    if (t->tightAfterBufSize < maxAfterSize) {
++        t->tightAfterBufSize = maxAfterSize;
++        if (t->tightAfterBuf == NULL)
++            t->tightAfterBuf = (char *)malloc(t->tightAfterBufSize);
+         else
+-            tightAfterBuf = (char *)realloc(tightAfterBuf,
+-                                            tightAfterBufSize);
++            t->tightAfterBuf = (char *)realloc(t->tightAfterBuf,
++                                               t->tightAfterBufSize);
+     }
+ 
+     if (w > maxRectWidth || w * h > maxRectSize) {
+@@ -651,20 +898,43 @@ SendRectSimple(rfbClientPtr cl, int x, int y, int w, int h)
+             for (dx = 0; dx < w; dx += maxRectWidth) {
+                 rw = (dx + maxRectWidth < w) ? maxRectWidth : w - dx;
+                 rh = (dy + subrectMaxHeight < h) ? subrectMaxHeight : h - dy;
+-                if (!SendSubrect(cl, x + dx, y + dy, rw, rh))
++                if (!SendSubrect(t, x + dx, y + dy, rw, rh))
+                     return FALSE;
+             }
+         }
+     } else {
+-        if (!SendSubrect(cl, x, y, w, h))
++        if (!SendSubrect(t, x, y, w, h))
+             return FALSE;
+     }
+ 
+     return TRUE;
+ }
+ 
++static int padding_size = 4;
++
++static void ExtendRect(rfbClientPtr cl, int* x, int* y, int* w, int* h)
++{
++	/*rfbLog("rect  in: %d %d %d %d \n", *x, *y, *w, *h);*/
++	int delta_h = (*x)%padding_size;
++	int delta_v = (*y)%padding_size;
++
++	*x = (*x)-delta_h;
++	*y = (*y)-delta_v;
++	*w = (*w)+delta_h;
++	*h = (*h)+delta_v;
++
++	*w = ((*w) + padding_size-1) & (~(padding_size-1));
++	*h = ((*h) + padding_size-1) & (~(padding_size-1));
++
++	*w = ((*x)+(*w)>cl->scaledScreen->width)  ? (cl->scaledScreen->width-(*x))  : (*w);
++	*h = ((*y)+(*h)>cl->scaledScreen->height) ? (cl->scaledScreen->height-(*y)) : (*h);
++
++	/*rfbLog("rect out: %d %d %d %d \n", *x, *y, *w, *h);*/
++}
++
++
+ static rfbBool
+-SendSubrect(rfbClientPtr cl,
++SendSubrect(threadparam *t,
+             int x,
+             int y,
+             int w,
+@@ -672,22 +942,32 @@ SendSubrect(rfbClientPtr cl,
+ {
+     char *fbptr;
+     rfbBool success = FALSE;
++    rfbClientPtr cl = t->cl;
+ 
+     /* Send pending data if there is more than 128 bytes. */
++#if 0
+     if (cl->ublen > 128) {
+         if (!rfbSendUpdateBuf(cl))
+             return FALSE;
+     }
++#endif
++
++    ExtendRect(cl, &x, &y, &w, &h);
+ 
+-    if (!SendTightHeader(cl, x, y, w, h))
++    if (!SendTightHeader(t, x, y, w, h))
+         return FALSE;
+ 
++#ifdef IMAGE_ONLY
++    //jpeg only by huiyue.cai
++    return SendJpegRect(t, x, y, w, h, qualityLevel);
++
++#else
+     fbptr = (cl->scaledScreen->frameBuffer
+              + (cl->scaledScreen->paddedWidthInBytes * y)
+              + (x * (cl->scaledScreen->bitsPerPixel / 8)));
+ 
+     if (subsampLevel == TJ_GRAYSCALE && qualityLevel != -1)
+-        return SendJpegRect(cl, x, y, w, h, qualityLevel);
++        return SendJpegRect(t, x, y, w, h, qualityLevel);
+ 
+     paletteMaxColors = w * h / tightConf[compressLevel].idxMaxColorsDivisor;
+     if(qualityLevel != -1)
+@@ -707,11 +987,11 @@ SendSubrect(rfbClientPtr cl,
+            with JPEG, since it is unnecessary */
+         switch (cl->format.bitsPerPixel) {
+         case 16:
+-            FastFillPalette16(cl, (uint16_t *)fbptr, w,
++            FastFillPalette16(t, (uint16_t *)fbptr, w,
+                               cl->scaledScreen->paddedWidthInBytes / 2, h);
+             break;
+         default:
+-            FastFillPalette32(cl, (uint32_t *)fbptr, w,
++            FastFillPalette32(t, (uint32_t *)fbptr, w,
+                               cl->scaledScreen->paddedWidthInBytes / 4, h);
+         }
+ 
+@@ -743,39 +1023,40 @@ SendSubrect(rfbClientPtr cl,
+     case 0:
+         /* Truecolor image */
+         if (qualityLevel != -1) {
+-            success = SendJpegRect(cl, x, y, w, h, qualityLevel);
++            success = SendJpegRect(t, x, y, w, h, qualityLevel);
+         } else {
+-            success = SendFullColorRect(cl, x, y, w, h);
++            success = SendFullColorRect(t, x, y, w, h);
+         }
+         break;
+     case 1:
+         /* Solid rectangle */
+-        success = SendSolidRect(cl);
++        success = SendSolidRect(t);
+         break;
+     case 2:
+         /* Two-color rectangle */
+-        success = SendMonoRect(cl, x, y, w, h);
++        success = SendMonoRect(t, x, y, w, h);
+         break;
+     default:
+         /* Up to 256 different colors */
+-        success = SendIndexedRect(cl, x, y, w, h);
++        success = SendIndexedRect(t, x, y, w, h);
+     }
+     return success;
++#endif
+ }
+ 
+ static rfbBool
+-SendTightHeader(rfbClientPtr cl,
++SendTightHeader(threadparam *t,
+                 int x,
+                 int y,
+                 int w,
+                 int h)
+ {
+     rfbFramebufferUpdateRectHeader rect;
++    rfbClientPtr cl = t->cl;
++
++    if (!CheckUpdateBuf(t, sz_rfbFramebufferUpdateRectHeader))
++        return FALSE;
+ 
+-    if (cl->ublen + sz_rfbFramebufferUpdateRectHeader > UPDATE_BUF_SIZE) {
+-        if (!rfbSendUpdateBuf(cl))
+-            return FALSE;
+-    }
+ 
+     rect.r.x = Swap16IfLE(x);
+     rect.r.y = Swap16IfLE(y);
+@@ -783,9 +1064,9 @@ SendTightHeader(rfbClientPtr cl,
+     rect.r.h = Swap16IfLE(h);
+     rect.encoding = Swap32IfLE(cl->tightEncoding);
+ 
+-    memcpy(&cl->updateBuf[cl->ublen], (char *)&rect,
++    memcpy(&t->updateBuf[*t->ublen], (char *)&rect,
+            sz_rfbFramebufferUpdateRectHeader);
+-    cl->ublen += sz_rfbFramebufferUpdateRectHeader;
++    (*t->ublen) += sz_rfbFramebufferUpdateRectHeader;
+ 
+     rfbStatRecordEncodingSent(cl, cl->tightEncoding,
+                               sz_rfbFramebufferUpdateRectHeader,
+@@ -800,24 +1081,23 @@ SendTightHeader(rfbClientPtr cl,
+  */
+ 
+ static rfbBool
+-SendSolidRect(rfbClientPtr cl)
++SendSolidRect(threadparam *t)
+ {
+     int len;
++    rfbClientPtr cl = t->cl;
+ 
+     if (usePixelFormat24) {
+-        Pack24(cl, tightBeforeBuf, &cl->format, 1);
++        Pack24(t, t->tightBeforeBuf, &cl->format, 1);
+         len = 3;
+     } else
+         len = cl->format.bitsPerPixel / 8;
+ 
+-    if (cl->ublen + 1 + len > UPDATE_BUF_SIZE) {
+-        if (!rfbSendUpdateBuf(cl))
+-            return FALSE;
+-    }
++    if (!CheckUpdateBuf(t, 1 + len))
++        return FALSE;
+ 
+-    cl->updateBuf[cl->ublen++] = (char)(rfbTightFill << 4);
+-    memcpy (&cl->updateBuf[cl->ublen], tightBeforeBuf, len);
+-    cl->ublen += len;
++    t->updateBuf[(*t->ublen)++] = (char)(rfbTightFill << 4);
++    memcpy(&t->updateBuf[*t->ublen], t->tightBeforeBuf, len);
++    (*t->ublen) += len;
+ 
+     rfbStatRecordEncodingSentAdd(cl, cl->tightEncoding, len + 1);
+ 
+@@ -825,7 +1105,7 @@ SendSolidRect(rfbClientPtr cl)
+ }
+ 
+ static rfbBool
+-SendMonoRect(rfbClientPtr cl,
++SendMonoRect(threadparam *t,
+              int x,
+              int y,
+              int w,
+@@ -833,11 +1113,12 @@ SendMonoRect(rfbClientPtr cl,
+ {
+     int streamId = 1;
+     int paletteLen, dataLen;
+-
++    rfbClientPtr cl = t->cl;
++	
+ #ifdef LIBVNCSERVER_HAVE_LIBPNG
+-    if (CanSendPngRect(cl, w, h)) {
++    if (CanSendPngRect(t, w, h)) {
+         /* TODO: setup palette maybe */
+-        return SendPngRect(cl, x, y, w, h);
++        return SendPngRect(t, x, y, w, h);
+         /* TODO: destroy palette maybe */
+     }
+ #endif
+@@ -870,7 +1151,7 @@ SendMonoRect(rfbClientPtr cl,
+         ((uint32_t *)tightAfterBuf)[0] = monoBackground;
+         ((uint32_t *)tightAfterBuf)[1] = monoForeground;
+         if (usePixelFormat24) {
+-            Pack24(cl, tightAfterBuf, &cl->format, 2);
++            Pack24(t, tightAfterBuf, &cl->format, 2);
+             paletteLen = 6;
+         } else
+             paletteLen = 8;
+@@ -899,13 +1180,13 @@ SendMonoRect(rfbClientPtr cl,
+         rfbStatRecordEncodingSentAdd(cl, cl->tightEncoding, 5);
+     }
+ 
+-    return CompressData(cl, streamId, dataLen,
++    return CompressData(t, streamId, dataLen,
+                         tightConf[compressLevel].monoZlibLevel,
+                         Z_DEFAULT_STRATEGY);
+ }
+ 
+ static rfbBool
+-SendIndexedRect(rfbClientPtr cl,
++SendIndexedRect(threadparam *t,
+                 int x,
+                 int y,
+                 int w,
+@@ -913,10 +1194,11 @@ SendIndexedRect(rfbClientPtr cl,
+ {
+     int streamId = 2;
+     int i, entryLen;
++    rfbClientPtr cl = t->cl;
+ 
+ #ifdef LIBVNCSERVER_HAVE_LIBPNG
+-    if (CanSendPngRect(cl, w, h)) {
+-        return SendPngRect(cl, x, y, w, h);
++    if (CanSendPngRect(t, w, h)) {
++        return SendPngRect(t, x, y, w, h);
+     }
+ #endif
+ 
+@@ -948,7 +1230,7 @@ SendIndexedRect(rfbClientPtr cl,
+                 palette.entry[i].listNode->rgb;
+         }
+         if (usePixelFormat24) {
+-            Pack24(cl, tightAfterBuf, &cl->format, paletteNumColors);
++            Pack24(t, tightAfterBuf, &cl->format, paletteNumColors);
+             entryLen = 3;
+         } else
+             entryLen = 4;
+@@ -978,13 +1260,13 @@ SendIndexedRect(rfbClientPtr cl,
+         return FALSE;           /* Should never happen. */
+     }
+ 
+-    return CompressData(cl, streamId, w * h,
++    return CompressData(t, streamId, w * h,
+                         tightConf[compressLevel].idxZlibLevel,
+                         Z_DEFAULT_STRATEGY);
+ }
+ 
+ static rfbBool
+-SendFullColorRect(rfbClientPtr cl,
++SendFullColorRect(threadparam *t,
+                   int x,
+                   int y,
+                   int w,
+@@ -992,10 +1274,11 @@ SendFullColorRect(rfbClientPtr cl,
+ {
+     int streamId = 0;
+     int len;
++    rfbClientPtr cl = t->cl;
+ 
+ #ifdef LIBVNCSERVER_HAVE_LIBPNG
+-    if (CanSendPngRect(cl, w, h)) {
+-        return SendPngRect(cl, x, y, w, h);
++    if (CanSendPngRect(t, w, h)) {
++        return SendPngRect(t, x, y, w, h);
+     }
+ #endif
+ 
+@@ -1012,18 +1295,18 @@ SendFullColorRect(rfbClientPtr cl,
+     rfbStatRecordEncodingSentAdd(cl, cl->tightEncoding, 1);
+ 
+     if (usePixelFormat24) {
+-        Pack24(cl, tightBeforeBuf, &cl->format, w * h);
++        Pack24(t, tightBeforeBuf, &cl->format, w * h);
+         len = 3;
+     } else
+         len = cl->format.bitsPerPixel / 8;
+ 
+-    return CompressData(cl, streamId, w * h * len,
++    return CompressData(t, streamId, w * h * len,
+                         tightConf[compressLevel].rawZlibLevel,
+                         Z_DEFAULT_STRATEGY);
+ }
+ 
+ static rfbBool
+-CompressData(rfbClientPtr cl,
++CompressData(threadparam *t,
+              int streamId,
+              int dataLen,
+              int zlibLevel,
+@@ -1031,16 +1314,25 @@ CompressData(rfbClientPtr cl,
+ {
+     z_streamp pz;
+     int err;
++    rfbClientPtr cl = t->cl;
+ 
+     if (dataLen < TIGHT_MIN_TO_COMPRESS) {
+-        memcpy(&cl->updateBuf[cl->ublen], tightBeforeBuf, dataLen);
+-        cl->ublen += dataLen;
+-        rfbStatRecordEncodingSentAdd(cl, cl->tightEncoding, dataLen);
++        memcpy(&t->updateBuf[*t->ublen], t->tightBeforeBuf, dataLen);
++        (*t->ublen) += dataLen;
++        t->bytessent += dataLen;
+         return TRUE;
+     }
+ 
+-    if (zlibLevel == 0)
+-        return SendCompressedData (cl, tightBeforeBuf, dataLen);
++    /* Tight encoding has only a limited number of Zlib streams (4).  The
++       streams must all be left open as long as the client is connected, or
++       performance suffers.  Thus, multiple threads can't use the same Zlib
++       stream.  We divide the pool of 4 evenly among the available threads (up
++       to the first 4 threads), and if each thread has more than one stream, it
++       cycles between them in a round-robin fashion.  If we have more than 4
++       threads, then threads 5 and beyond must encode their data without Zlib
++       compression. */
++    if (zlibLevel == 0 || t->id > 3)
++        return SendCompressedData (t, t->tightBeforeBuf, dataLen);
+ 
+     pz = &cl->zsStruct[streamId];
+ 
+@@ -1050,8 +1342,8 @@ CompressData(rfbClientPtr cl,
+         pz->zfree = Z_NULL;
+         pz->opaque = Z_NULL;
+ 
+-        err = deflateInit2 (pz, zlibLevel, Z_DEFLATED, MAX_WBITS,
+-                            MAX_MEM_LEVEL, zlibStrategy);
++        err = deflateInit2(pz, zlibLevel, Z_DEFLATED, MAX_WBITS,
++                           MAX_MEM_LEVEL, zlibStrategy);
+         if (err != Z_OK)
+             return FALSE;
+ 
+@@ -1060,14 +1352,14 @@ CompressData(rfbClientPtr cl,
+     }
+ 
+     /* Prepare buffer pointers. */
+-    pz->next_in = (Bytef *)tightBeforeBuf;
++    pz->next_in = (Bytef *)t->tightBeforeBuf;
+     pz->avail_in = dataLen;
+-    pz->next_out = (Bytef *)tightAfterBuf;
+-    pz->avail_out = tightAfterBufSize;
++    pz->next_out = (Bytef *)t->tightAfterBuf;
++    pz->avail_out = t->tightAfterBufSize;
+ 
+     /* Change compression parameters if needed. */
+     if (zlibLevel != cl->zsLevel[streamId]) {
+-        if (deflateParams (pz, zlibLevel, zlibStrategy) != Z_OK) {
++        if (deflateParams(pz, zlibLevel, zlibStrategy) != Z_OK) {
+             return FALSE;
+         }
+         cl->zsLevel[streamId] = zlibLevel;
+@@ -1079,25 +1371,29 @@ CompressData(rfbClientPtr cl,
+         return FALSE;
+     }
+ 
+-    return SendCompressedData(cl, tightAfterBuf,
+-                              tightAfterBufSize - pz->avail_out);
++    return SendCompressedData(t, t->tightAfterBuf,
++                              t->tightAfterBufSize - pz->avail_out);
+ }
+ 
+-static rfbBool SendCompressedData(rfbClientPtr cl, char *buf,
++static rfbBool SendCompressedData(threadparam *t, char *buf,
+                                   int compressedLen)
+ {
+     int i, portionLen;
+ 
+-    cl->updateBuf[cl->ublen++] = compressedLen & 0x7F;
+-    rfbStatRecordEncodingSentAdd(cl, cl->tightEncoding, 1);
++	/*very important!!! for send 'compressedLen' correctly*/
++	if (!CheckUpdateBuf(t, 4))
++		return FALSE;
++
++    t->updateBuf[(*t->ublen)++] = compressedLen & 0x7F;
++    t->bytessent++;
+     if (compressedLen > 0x7F) {
+-        cl->updateBuf[cl->ublen-1] |= 0x80;
+-        cl->updateBuf[cl->ublen++] = compressedLen >> 7 & 0x7F;
+-        rfbStatRecordEncodingSentAdd(cl, cl->tightEncoding, 1);
++        t->updateBuf[(*t->ublen)-1] |= 0x80;
++        t->updateBuf[(*t->ublen)++] = compressedLen >> 7 & 0x7F;
++        t->bytessent++;
+         if (compressedLen > 0x3FFF) {
+-            cl->updateBuf[cl->ublen-1] |= 0x80;
+-            cl->updateBuf[cl->ublen++] = compressedLen >> 14 & 0xFF;
+-            rfbStatRecordEncodingSentAdd(cl, cl->tightEncoding, 1);
++            t->updateBuf[(*t->ublen)-1] |= 0x80;
++            t->updateBuf[(*t->ublen)++] = compressedLen >> 14 & 0xFF;
++            t->bytessent++;
+         }
+     }
+ 
+@@ -1106,15 +1402,12 @@ static rfbBool SendCompressedData(rfbClientPtr cl, char *buf,
+         if (i + portionLen > compressedLen) {
+             portionLen = compressedLen - i;
+         }
+-        if (cl->ublen + portionLen > UPDATE_BUF_SIZE) {
+-            if (!rfbSendUpdateBuf(cl))
+-                return FALSE;
+-        }
+-        memcpy(&cl->updateBuf[cl->ublen], &buf[i], portionLen);
+-        cl->ublen += portionLen;
++        if (!CheckUpdateBuf(t, portionLen))
++            return FALSE;
++        memcpy(&t->updateBuf[*t->ublen], &buf[i], portionLen);
++        (*t->ublen) += portionLen;
+     }
+-    rfbStatRecordEncodingSentAdd(cl, cl->tightEncoding, compressedLen);
+-
++    t->bytessent += compressedLen;
+     return TRUE;
+ }
+ 
+@@ -1234,9 +1527,10 @@ DEFINE_FILL_PALETTE_FUNCTION(32)
+ #define DEFINE_FAST_FILL_PALETTE_FUNCTION(bpp)                          \
+                                                                         \
+ static void                                                             \
+-FastFillPalette##bpp(rfbClientPtr cl, uint##bpp##_t *data, int w,       \
++FastFillPalette##bpp(threadparam *t, uint##bpp##_t *data, int w,       \
+                      int pitch, int h)                                  \
+ {                                                                       \
++    rfbClientPtr cl = t->cl;                                            \
+     uint##bpp##_t c0, c1, ci, mask, c0t, c1t, cit;                      \
+     int i, j, i2 = 0, j2, n0, n1, ni;                                   \
+                                                                         \
+@@ -1423,7 +1717,7 @@ PaletteInsert(uint32_t rgb,
+  * Color components assumed to be byte-aligned.
+  */
+ 
+-static void Pack24(rfbClientPtr cl,
++static void Pack24(threadparam *t,
+                    char *buf,
+                    rfbPixelFormat *fmt,
+                    int count)
+@@ -1431,6 +1725,7 @@ static void Pack24(rfbClientPtr cl,
+     uint32_t *buf32;
+     uint32_t pix;
+     int r_shift, g_shift, b_shift;
++    rfbClientPtr cl = t->cl;
+ 
+     buf32 = (uint32_t *)buf;
+ 
+@@ -1550,42 +1845,129 @@ DEFINE_MONO_ENCODE_FUNCTION(32)
+ /*
+  * JPEG compression stuff.
+  */
++void
++rfbTranslateAlpha(char *pdamage, unsigned char *iptr, char *optr, int bytesBetweenInputLines, int bytesBetweenOutputLines, int width, int height)
++{
++    /*rfbLog(" xx rfbTranslateAlpha \n");*/
++    
++    register int totalsize = width*height;
++    register uint32_t* ip = (uint32_t *)iptr;
++    register uint8_t* op = (uint8_t *)optr;
++    register int step = 0;
++    register char damage = 0;
++
++    *pdamage = 0;
++
++    /*rfbLog(" xx rfbTranslateAlpha \n");*/
++    
++    while (totalsize > 0) { 
++    if(!(totalsize%width))
++    {
++        ip = (uint32_t *)(iptr + step * bytesBetweenInputLines);
++        op = (uint8_t*)(optr + step * bytesBetweenOutputLines);
++        step++;
++    }
++    if(*op != *((uint8_t*)ip))
++    {
++        *op = 20;//*((uint8_t*)ip);
++        damage = 1;
++    }
++    op++;
++    ip++;
++    totalsize--;
++    }
++
++    *pdamage = damage;
++    
++}
++
++static rfbBool
++SendJpegRect_Alpha(threadparam *t, int x, int y, int w, int h, int quality)
++{
++    int subsamp = TJ_GRAYSCALE;
++    unsigned long size = 0;
++    int flags = 0;
++    rfbClientPtr cl = t->cl;
++
++    /*ignore alpha by huiyue.cai*/
++    /*return SendCompressedData(t, t->tightAfterBuf, 0);*/
++
++    if (!j) {
++        if ((j = tjInitCompress()) == NULL) {
++            rfbLog("JPEG Error: %s\n", tjGetErrorStr());
++            return 0;
++        }
++    }
++
++    if (tightAfterBufSize < TJBUFSIZE(w, h)) {
++        if (tightAfterBuf == NULL)
++            tightAfterBuf = (char *)malloc(TJBUFSIZE(w, h));
++        else
++            tightAfterBuf = (char *)realloc(tightAfterBuf,
++                                               TJBUFSIZE(w, h));
++        if (!tightAfterBuf) {
++            rfbLog("Memory allocation failure!\n");
++            return 0;
++        }
++        tightAfterBufSize = TJBUFSIZE(w, h);
++    }
++
++    if (tjCompress(t->j, (unsigned char *)&(cl->alphaBuf[y][x]), w, MAX_SCREEN_L, h, 1,
++                   (unsigned char *)(t->tightAfterBuf), &size, subsamp, quality,
++                   flags) == -1) {
++      rfbLog("JPEG alpha Error: %s\n", tjGetErrorStr());
++      return 0;
++    }
++    /*rfbLog("SendJpegRect Alpha %d %d %d %d size:%d \n", x,y, w,h, size);*/
++
++    /*stbi_write_png("/home/sky/Pictures/vnc_server_alpha.png",1280, 720, 1, (cl->alphaBuf), 0);*/
++
++
++    return SendCompressedData(t, t->tightAfterBuf, size);
++
++}
+ 
+ static rfbBool
+-SendJpegRect(rfbClientPtr cl, int x, int y, int w, int h, int quality)
++SendJpegRect(threadparam *t, int x, int y, int w, int h, int quality)
+ {
+     unsigned char *srcbuf;
++    rfbClientPtr cl = t->cl;
+     int ps = cl->screen->serverFormat.bitsPerPixel / 8;
+-    int subsamp = subsampLevel2tjsubsamp[subsampLevel];
++    //jpeg 420 only by huiyue.cai
++    int subsamp = TJ_420;//subsampLevel2tjsubsamp[subsampLevel];
+     unsigned long size = 0;
+     int flags = 0, pitch;
+     unsigned char *tmpbuf = NULL;
++    char alphaDamage;
++    
++    //rfbLog("JPEG TID: %d , Q: %d\n", t->id, quality);
+ 
+     if (cl->screen->serverFormat.bitsPerPixel == 8)
+-        return SendFullColorRect(cl, x, y, w, h);
++        return SendFullColorRect(t, x,y,w, h);
++    //rfbLog("SendJpegRect quality :%d \n", quality);
+ 
+     if (ps < 2) {
+         rfbLog("Error: JPEG requires 16-bit, 24-bit, or 32-bit pixel format.\n");
+         return 0;
+     }
+-    if (!j) {
+-        if ((j = tjInitCompress()) == NULL) {
++    if (!t->j) {
++        if ((t->j = tjInitCompress()) == NULL) {
+             rfbLog("JPEG Error: %s\n", tjGetErrorStr());
+             return 0;
+         }
+     }
+ 
+-    if (tightAfterBufSize < TJBUFSIZE(w, h)) {
+-        if (tightAfterBuf == NULL)
+-            tightAfterBuf = (char *)malloc(TJBUFSIZE(w, h));
++    if (t->tightAfterBufSize < TJBUFSIZE(w, h)) {
++        if (t->tightAfterBuf == NULL)
++            t->tightAfterBuf = (char *)malloc(TJBUFSIZE(w, h));
+         else
+-            tightAfterBuf = (char *)realloc(tightAfterBuf,
+-                                            TJBUFSIZE(w, h));
+-        if (!tightAfterBuf) {
++            t->tightAfterBuf = (char *)realloc(t->tightAfterBuf,
++                                               TJBUFSIZE(w, h));
++        if (!t->tightAfterBuf) {
+             rfbLog("Memory allocation failure!\n");
+             return 0;
+         }
+-        tightAfterBufSize = TJBUFSIZE(w, h);
++        t->tightAfterBufSize = TJBUFSIZE(w, h);
+     }
+ 
+     if (ps == 2) {
+@@ -1638,14 +2020,12 @@ SendJpegRect(rfbClientPtr cl, int x, int y, int w, int h, int quality)
+             [y * pitch + x * ps];
+     }
+ 
+-    if (tjCompress(j, srcbuf, w, pitch, h, ps, (unsigned char *)tightAfterBuf,
+-                   &size, subsamp, quality, flags) == -1) {
+-        rfbLog("JPEG Error: %s\n", tjGetErrorStr());
+-        if (tmpbuf) {
+-            free(tmpbuf);
+-            tmpbuf = NULL;
+-        }
+-        return 0;
++    if (tjCompress(t->j, srcbuf, w, pitch, h, ps,
++                   (unsigned char *)t->tightAfterBuf, &size, subsamp, quality,
++                   flags) == -1) {
++      rfbLog("JPEG Error: %s\n", tjGetErrorStr());
++      if (tmpbuf) { free(tmpbuf);  tmpbuf = NULL; }
++      return 0;
+     }
+ 
+     if (tmpbuf) {
+@@ -1653,40 +2033,63 @@ SendJpegRect(rfbClientPtr cl, int x, int y, int w, int h, int quality)
+         tmpbuf = NULL;
+     }
+ 
+-    if (cl->ublen + TIGHT_MIN_TO_COMPRESS + 1 > UPDATE_BUF_SIZE) {
+-        if (!rfbSendUpdateBuf(cl))
+-            return FALSE;
+-    }
++    if (!CheckUpdateBuf(t, TIGHT_MIN_TO_COMPRESS + 1))
++        return FALSE;
+ 
+-    cl->updateBuf[cl->ublen++] = (char)(rfbTightJpeg << 4);
+-    rfbStatRecordEncodingSentAdd(cl, cl->tightEncoding, 1);
++    t->updateBuf[(*t->ublen)++] = (char)(rfbTightJpeg << 4);
++    t->bytessent++;
+ 
+-    return SendCompressedData(cl, tightAfterBuf, (int)size);
++    if(SendCompressedData(t, t->tightAfterBuf, (int)size))
++    {
++        if(cl->supportAlpha)
++        {
++            char damage = 0;
++            rfbTranslateAlpha(&damage, srcbuf, (char *)&(cl->alphaBuf[y][x]), pitch, MAX_SCREEN_L, w, h);
++            if(1)
++            {
++                return SendJpegRect_Alpha(t, x, y, w, h, quality);
++            }
++            else
++            {
++                return SendCompressedData(t, t->tightAfterBuf, 0);
++            }
++        }
++        else
++        {
++            return TRUE;
++        }
++    }
++    else
++    {
++        return FALSE;
++    }
++    
+ }
+ 
+ static void
+-PrepareRowForImg(rfbClientPtr cl,
++PrepareRowForImg(threadparam *t,
+                   uint8_t *dst,
+                   int x,
+                   int y,
+                   int count)
+ {
++    rfbClientPtr cl = t->cl;
+     if (cl->screen->serverFormat.bitsPerPixel == 32) {
+         if ( cl->screen->serverFormat.redMax == 0xFF &&
+              cl->screen->serverFormat.greenMax == 0xFF &&
+              cl->screen->serverFormat.blueMax == 0xFF ) {
+-            PrepareRowForImg24(cl, dst, x, y, count);
++            PrepareRowForImg24(t, dst, x, y, count);
+         } else {
+-            PrepareRowForImg32(cl, dst, x, y, count);
++            PrepareRowForImg32(t, dst, x, y, count);
+         }
+     } else {
+         /* 16 bpp assumed. */
+-        PrepareRowForImg16(cl, dst, x, y, count);
++        PrepareRowForImg16(t, dst, x, y, count);
+     }
+ }
+ 
+ static void
+-PrepareRowForImg24(rfbClientPtr cl,
++PrepareRowForImg24(threadparam *t,
+                     uint8_t *dst,
+                     int x,
+                     int y,
+@@ -1694,6 +2097,7 @@ PrepareRowForImg24(rfbClientPtr cl,
+ {
+     uint32_t *fbptr;
+     uint32_t pix;
++    rfbClientPtr cl = t->cl;   
+ 
+     fbptr = (uint32_t *)
+         &cl->scaledScreen->frameBuffer[y * cl->scaledScreen->paddedWidthInBytes + x * 4];
+@@ -1709,11 +2113,12 @@ PrepareRowForImg24(rfbClientPtr cl,
+ #define DEFINE_JPEG_GET_ROW_FUNCTION(bpp)                                   \
+                                                                             \
+ static void                                                                 \
+-PrepareRowForImg##bpp(rfbClientPtr cl, uint8_t *dst, int x, int y, int count) { \
++PrepareRowForImg##bpp(threadparam *t, uint8_t *dst, int x, int y, int count) { \
+     uint##bpp##_t *fbptr;                                                   \
+     uint##bpp##_t pix;                                                      \
+     int inRed, inGreen, inBlue;                                             \
+                                                                             \
++    rfbClientPtr cl = t->cl;                                                \
+     fbptr = (uint##bpp##_t *)                                               \
+         &cl->scaledScreen->frameBuffer[y * cl->scaledScreen->paddedWidthInBytes +       \
+                              x * (bpp / 8)];                                \
+@@ -1748,7 +2153,9 @@ DEFINE_JPEG_GET_ROW_FUNCTION(32)
+ 
+ static TLS int pngDstDataLen = 0;
+ 
+-static rfbBool CanSendPngRect(rfbClientPtr cl, int w, int h) {
++static rfbBool CanSendPngRect(threadparam *t, int w, int h) {
++    rfbClientPtr cl = t->cl;
++
+     if (cl->tightEncoding != rfbEncodingTightPng) {
+         return FALSE;
+     }
+@@ -1765,7 +2172,7 @@ static void pngWriteData(png_structp png_ptr, png_bytep data,
+                            png_size_t length)
+ {
+ #if 0
+-    rfbClientPtr cl = png_get_io_ptr(png_ptr);
++    threadparam *t = png_get_io_ptr(png_ptr);
+ 
+     buffer_reserve(&vs->tight.png, vs->tight.png.offset + length);
+     memcpy(vs->tight.png.buffer + vs->tight.png.offset, data, length);
+@@ -1790,8 +2197,9 @@ static void pngFree(png_structp png_ptr, png_voidp ptr)
+     free(ptr);
+ }
+ 
+-static rfbBool SendPngRect(rfbClientPtr cl, int x, int y, int w, int h) {
++static rfbBool SendPngRect(threadparam *t, int x, int y, int w, int h) {
+     /* rfbLog(">> SendPngRect x:%d, y:%d, w:%d, h:%d\n", x, y, w, h); */
++    rfbClientPtr cl = t->cl;
+ 
+     png_byte color_type;
+     png_structp png_ptr;
+@@ -1870,7 +2278,7 @@ static rfbBool SendPngRect(rfbClientPtr cl, int x, int y, int w, int h) {
+             PrepareRowForImg(cl, buf, x, y + dy, w);
+         }
+ #else
+-        PrepareRowForImg(cl, buf, x, y + dy, w);
++        PrepareRowForImg(t, buf, x, y + dy, w);
+ #endif
+         png_write_row(png_ptr, buf);
+     }
+@@ -1895,6 +2303,6 @@ static rfbBool SendPngRect(rfbClientPtr cl, int x, int y, int w, int h) {
+     rfbStatRecordEncodingSentAdd(cl, cl->tightEncoding, 1);
+ 
+     /* rfbLog("<< SendPngRect\n"); */
+-    return SendCompressedData(cl, tightAfterBuf, pngDstDataLen);
++    return SendCompressedData(t, t->tightAfterBuf, pngDstDataLen);
+ }
+ #endif
+diff --git a/external/libvncserver/others/anbox/anbox_input.cpp b/external/libvncserver/others/anbox/anbox_input.cpp
+new file mode 100755
+index 0000000..b7394dc
+--- /dev/null
++++ b/external/libvncserver/others/anbox/anbox_input.cpp
+@@ -0,0 +1,105 @@
++#include <vector>
++#include <iostream>
++
++#include <time.h>
++#include <stdlib.h>
++#include <unistd.h>
++
++#include "device.h"
++#include "anbox_input.h"
++#include <android/log.h>
++
++#include <pthread.h>
++
++#define L(...) do{ __android_log_print(ANDROID_LOG_WARN,"VNCserver",__VA_ARGS__);printf(__VA_ARGS__); } while (0);
++
++
++uint16_t keys[4]{103, 108, 105, 106};
++
++uint16_t random_key()
++{
++    return keys[rand() % 4];
++}
++
++void fake(std::vector<anbox::input::Event> &events)
++{
++    uint16_t key = random_key();
++    events.push_back({EV_KEY, key, 1});
++    events.push_back({EV_KEY, key, 0});
++}
++
++std::shared_ptr<anbox::input::Device> new_keyboard(const std::string &path)
++{
++    L("new_keyboard");
++    std::shared_ptr<anbox::input::Device> keyboard = anbox::input::Device::create(path);
++    keyboard->set_name("keyboard");
++    keyboard->set_driver_version(1);
++    keyboard->set_input_id({BUS_VIRTUAL, 3, 3, 3});
++    keyboard->set_physical_location("none");
++    keyboard->set_key_bit(BTN_MISC);
++    keyboard->set_key_bit(KEY_OK);
++    return keyboard;
++}
++
++std::shared_ptr<anbox::input::Device> new_pointer(const std::string &path)
++{
++    std::shared_ptr<anbox::input::Device> pointer = anbox::input::Device::create(path);
++    pointer->set_name("pointer");
++    pointer->set_driver_version(1);
++    pointer->set_input_id({BUS_VIRTUAL, 2, 2, 2});
++    pointer->set_physical_location("none");
++    pointer->set_key_bit(BTN_MOUSE);
++    pointer->set_rel_bit(REL_X);
++    pointer->set_rel_bit(REL_Y);
++    pointer->set_rel_bit(REL_HWHEEL);
++    pointer->set_rel_bit(REL_WHEEL);
++    pointer->set_prop_bit(INPUT_PROP_POINTER);
++    return pointer;
++}
++
++static pthread_t input_accept_thread_id;
++static std::shared_ptr<anbox::input::Device> keyboard;
++static std::vector<anbox::input::Event> events;
++
++static void *
++thread_start(void *arg)
++{
++    std::string path((char*)arg);
++    srand((unsigned)time(0));
++
++    L("new client...:%s", (char*)arg);
++
++    keyboard = new_keyboard(path);
++    L("new client accept... 1");
++    keyboard->new_client();
++    L("new client accept... 2");
++
++    return NULL;
++}
++
++void anbox_init_input(int argc, char *argv[])
++{
++    if (argc != 2) {
++        L("must specify socket path");
++        return;
++    }
++    
++    if(pthread_create(&input_accept_thread_id, NULL, thread_start , argv[1])) {
++    
++        L("Error creating thread\n");
++        return;   
++    }
++
++    return;
++}
++
++void anbox_send_kbd_event(uint16_t type, uint16_t key, int32_t value)
++{
++    L("direct anbox_send_kbd_event ...");
++	events.clear();	    
++    events.push_back({type, key, value});
++	keyboard->send_events(events);
++	//usleep(200000);
++}
++
++
+diff --git a/external/libvncserver/others/anbox/anbox_input.h b/external/libvncserver/others/anbox/anbox_input.h
+new file mode 100755
+index 0000000..0b2d4ec
+--- /dev/null
++++ b/external/libvncserver/others/anbox/anbox_input.h
+@@ -0,0 +1,25 @@
++/*
++ *
++ *
++ * input for anbox by cloud android team
++ *
++ *
++*/
++
++#ifndef ANBOX_INPUT
++#define ANBOX_INPUT
++
++#if(defined __cplusplus)
++	extern "C"
++{
++#endif
++
++
++void anbox_init_input(int argc, char *argv[]);
++void anbox_send_kbd_event(uint16_t type, uint16_t key, int32_t value);
++
++#if(defined __cplusplus)
++}
++#endif
++
++#endif
+diff --git a/external/libvncserver/others/anbox/device.cpp b/external/libvncserver/others/anbox/device.cpp
+new file mode 100755
+index 0000000..2d9ad51
+--- /dev/null
++++ b/external/libvncserver/others/anbox/device.cpp
+@@ -0,0 +1,128 @@
++#include "device.h"
++#include "local_socket_connection.h"
++
++#include <time.h>
++#include <string.h>
++#include <android/log.h>
++
++#define L(...) do{ __android_log_print(ANDROID_LOG_WARN,"VNCserver",__VA_ARGS__);printf(__VA_ARGS__); } while (0);
++
++
++namespace anbox {
++namespace input {
++std::shared_ptr<Device> Device::create(
++    const std::string &path) {
++  auto sp = std::make_shared<Device>(path);
++  return sp;
++}
++
++Device::Device(const std::string &path)
++    : connection_(
++          std::make_shared<LocalSocketConnection>(path)),
++      path_(path) {
++  ::memset(&info_, 0, sizeof(info_));
++}
++
++Device::~Device() {}
++
++void Device::send_events(const std::vector<Event> &events) {
++  struct CompatEvent {
++    // NOTE: A bit dirty but as we're running currently a 64 bit container
++    // struct input_event has a different size. We rebuild the struct here
++    // to reach the correct size.
++    uint64_t sec;
++    uint64_t usec;
++    uint16_t type;
++    uint16_t code;
++    uint32_t value;
++  };
++
++  struct timespec spec;
++  clock_gettime(CLOCK_MONOTONIC, &spec);
++
++  auto data = new CompatEvent[events.size()];
++  int n = 0;
++  for (const auto &event : events) {
++    data[n].sec = spec.tv_sec;
++    data[n].usec = spec.tv_nsec / 1000;
++    data[n].type = event.type;
++    data[n].code = event.code;
++    data[n].value = event.value;
++    n++;
++  }
++
++  connection_->send(reinterpret_cast<const char *>(data),
++                              events.size() * sizeof(struct CompatEvent));
++}
++
++void Device::set_name(const std::string &name) {
++  snprintf(info_.name, 80, "%s", name.c_str());
++}
++
++void Device::set_driver_version(const int &version) {
++  info_.driver_version = version;
++}
++
++void Device::set_input_id(const struct input_id &id) {
++  info_.id.bustype = id.bustype;
++  info_.id.product = id.product;
++  info_.id.vendor = id.vendor;
++  info_.id.version = id.version;
++}
++
++void Device::set_physical_location(const std::string &physical_location) {
++  snprintf(info_.physical_location, 80, "%s", physical_location.c_str());
++}
++
++void Device::set_key_bit(const uint64_t &bit) {
++  set_bit(info_.key_bitmask, bit);
++}
++
++void Device::set_abs_bit(const uint64_t &bit) {
++  set_bit(info_.abs_bitmask, bit);
++}
++
++void Device::set_rel_bit(const uint64_t &bit) {
++  set_bit(info_.rel_bitmask, bit);
++}
++
++void Device::set_sw_bit(const uint64_t &bit) {
++  set_bit(info_.sw_bitmask, bit);
++}
++
++void Device::set_led_bit(const uint64_t &bit) {
++  set_bit(info_.led_bitmask, bit);
++}
++
++void Device::set_ff_bit(const uint64_t &bit) {
++  set_bit(info_.ff_bitmask, bit);
++}
++
++void Device::set_prop_bit(const uint64_t &bit) {
++  set_bit(info_.prop_bitmask, bit);
++}
++
++void Device::set_abs_min(const uint64_t &bit, const uint32_t &value) {
++  info_.abs_min[bit] = value;
++}
++
++void Device::set_abs_max(const uint64_t &bit, const uint32_t &value) {
++  info_.abs_max[bit] = value;
++}
++
++void Device::set_bit(uint8_t *array, const uint64_t &bit) {
++  array[bit / 8] |= (1 << (bit % 8));
++}
++
++void Device::set_unique_id(const std::string &unique_id) {
++  snprintf(info_.unique_id, 80, "%s", unique_id.c_str());
++}
++
++std::string Device::socket_path() const { return path_; }
++
++void Device::new_client() {
++  connection_->wait_connection();
++  connection_->send(reinterpret_cast<char const *>(&info_), sizeof(info_));
++}
++}  // namespace input
++}  // namespace anbox
+diff --git a/external/libvncserver/others/anbox/device.h b/external/libvncserver/others/anbox/device.h
+new file mode 100755
+index 0000000..52eba08
+--- /dev/null
++++ b/external/libvncserver/others/anbox/device.h
+@@ -0,0 +1,83 @@
++#ifndef ANBOX_INPUT_DEVICE_H_
++#define ANBOX_INPUT_DEVICE_H_
++
++#include <vector>
++#include <string>
++#include <memory>
++#include <stdint.h>
++
++#include <linux/input.h>
++
++namespace anbox {
++
++class LocalSocketConnection;
++namespace input {
++struct Event {
++  uint16_t type;
++  uint16_t code;
++  int32_t value;
++};
++
++class Device {
++ public:
++  static std::shared_ptr<Device> create(
++      const std::string &path);
++
++  Device(const std::string &path);
++  ~Device();
++
++  void send_events(const std::vector<Event> &events);
++  void send_event(const uint16_t &code, const uint16_t &event,
++                  const std::int32_t &value);
++
++  void set_name(const std::string &name);
++  void set_driver_version(const int &version);
++  void set_input_id(const struct input_id &id);
++  void set_physical_location(const std::string &physical_location);
++  void set_unique_id(const std::string &unique_id);
++  void set_key_bit(const uint64_t &bit);
++  void set_abs_bit(const uint64_t &bit);
++  void set_rel_bit(const uint64_t &bit);
++  void set_sw_bit(const uint64_t &bit);
++  void set_led_bit(const uint64_t &bit);
++  void set_ff_bit(const uint64_t &bit);
++  void set_prop_bit(const uint64_t &bit);
++
++  void set_abs_min(const uint64_t &bit, const uint32_t &value);
++  void set_abs_max(const uint64_t &bit, const uint32_t &value);
++
++  std::string socket_path() const;
++
++  void new_client();
++
++ private:
++  // NOTE: If you modify this struct you have to modify the version on
++  // the Android side too. See
++  // frameworks/native/services/inputflinger/EventHub.cpp
++  struct Info {
++    char name[80];
++    int driver_version;
++    struct input_id id;
++    char physical_location[80];
++    char unique_id[80];
++    uint8_t key_bitmask[(KEY_MAX + 1) / 8];
++    uint8_t abs_bitmask[(ABS_MAX + 1) / 8];
++    uint8_t rel_bitmask[(REL_MAX + 1) / 8];
++    uint8_t sw_bitmask[(SW_MAX + 1) / 8];
++    uint8_t led_bitmask[(LED_MAX + 1) / 8];
++    uint8_t ff_bitmask[(FF_MAX + 1) / 8];
++    uint8_t prop_bitmask[(INPUT_PROP_MAX + 1) / 8];
++    uint32_t abs_max[ABS_CNT];
++    uint32_t abs_min[ABS_CNT];
++  };
++
++  void set_bit(uint8_t *array, const uint64_t &bit);
++
++  std::shared_ptr<LocalSocketConnection> connection_;
++  std::string path_;
++  Info info_;
++};
++}  // namespace input
++}  // namespace anbox
++
++#endif
+diff --git a/external/libvncserver/others/anbox/local_socket_connection.cpp b/external/libvncserver/others/anbox/local_socket_connection.cpp
+new file mode 100755
+index 0000000..aeed52b
+--- /dev/null
++++ b/external/libvncserver/others/anbox/local_socket_connection.cpp
+@@ -0,0 +1,124 @@
++/*
++ * Copyright (C) 2016 Simon Fels <morphis@gravedo.de>
++ *
++ * This program is free software: you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 3, as published
++ * by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranties of
++ * MERCHANTABILITY, SATISFACTORY QUALITY, or FITNESS FOR A PARTICULAR
++ * PURPOSE.  See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program.  If not, see <http://www.gnu.org/licenses/>.
++ *
++ */
++
++#include "local_socket_connection.h"
++
++#include <stdexcept>
++#include <sys/types.h>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <unistd.h>
++#include <errno.h>
++
++#include <android/log.h>
++
++#define L(...) do{ __android_log_print(ANDROID_LOG_WARN,"VNCserver",__VA_ARGS__);printf(__VA_ARGS__); } while (0);
++
++
++namespace {
++bool socket_error_is_transient(int error_code) {
++    return (error_code == EINTR);
++}
++}
++
++namespace anbox {
++LocalSocketConnection::LocalSocketConnection(const std::string &path) :
++    listen_fd_(-1),
++    cli_fd_(-1) {
++
++    L("LocalSocketConnection:%s", path.data());
++
++    unlink(path.c_str());
++    struct sockaddr_un socket_address;
++    memset(&socket_address, 0, sizeof(socket_address));
++
++    socket_address.sun_family = AF_UNIX;
++    memcpy(socket_address.sun_path, path.data(), path.size());
++
++    listen_fd_ = socket(AF_UNIX, SOCK_STREAM, 0);
++    if (bind(listen_fd_, reinterpret_cast<sockaddr*>(&socket_address), sizeof(socket_address)) < 0)
++    {
++        L("Failed to bind socket: %d", errno);
++        return;
++        //throw std::runtime_error("Failed to bind socket");
++    }
++    if (listen(listen_fd_, 1) < 0)
++    {
++        L("Failed to listen socket:%d",errno);
++        return;
++        //throw std::runtime_error("Failed to listen socket");
++    }
++
++    L("listen socket:%d", listen_fd_);
++}
++
++LocalSocketConnection::~LocalSocketConnection() {
++    if (listen_fd_ >= 0)
++        ::close(listen_fd_);
++    if (cli_fd_ >= 0)
++        ::close(cli_fd_);
++}
++
++void LocalSocketConnection::wait_connection() {
++    int fd = 4, len;
++    struct sockaddr addr;
++    len = sizeof(addr);
++    
++    if ((fd = ::accept(listen_fd_, &addr, reinterpret_cast<socklen_t*>(&len))) < 0)
++    {
++        L("Failed to accept socket");
++        return;
++        //throw std::runtime_error("Failed to accept socket");
++    }
++    cli_fd_ = fd;
++    L("accept socket fd:%d", cli_fd_);
++}
++
++ssize_t LocalSocketConnection::read_all(std::uint8_t *buffer, const size_t &size) {
++    ssize_t bytes_read = ::recv(cli_fd_, reinterpret_cast<void*>(buffer), size, 0);
++    return bytes_read;
++}
++
++void LocalSocketConnection::send(char const* data, size_t length) {
++    size_t bytes_written{0};
++
++    while(bytes_written < length) {
++        ssize_t const result = ::send(cli_fd_,
++                                      data + bytes_written,
++                                      length - bytes_written,
++                                      MSG_NOSIGNAL);
++        if (result < 0) {
++            if (socket_error_is_transient(errno))
++                continue;
++            else
++            {
++                L("Failed to send message to server fd:%d",cli_fd_);
++                return;
++                //throw std::runtime_error("Failed to send message to server");
++            }
++        }
++
++        bytes_written += result;
++    }
++}
++
++ssize_t LocalSocketConnection::send_raw(char const* data, size_t length) {
++  (void)data;
++  (void)length;
++  return -EIO;
++}
++} // namespace anbox
+diff --git a/external/libvncserver/others/anbox/local_socket_connection.h b/external/libvncserver/others/anbox/local_socket_connection.h
+new file mode 100755
+index 0000000..6b65201
+--- /dev/null
++++ b/external/libvncserver/others/anbox/local_socket_connection.h
+@@ -0,0 +1,41 @@
++/*
++ * Copyright (C) 2016 Simon Fels <morphis@gravedo.de>
++ *
++ * This program is free software: you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 3, as published
++ * by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranties of
++ * MERCHANTABILITY, SATISFACTORY QUALITY, or FITNESS FOR A PARTICULAR
++ * PURPOSE.  See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program.  If not, see <http://www.gnu.org/licenses/>.
++ *
++ */
++
++#ifndef ANBOX_ANDROID_LOCAL_SOCKET_CONNECTION_H_
++#define ANBOX_ANDROID_LOCAL_SOCKET_CONNECTION_H_
++
++#include <string>
++#include <vector>
++
++namespace anbox {
++class LocalSocketConnection {
++public:
++    LocalSocketConnection(const std::string &path);
++    ~LocalSocketConnection();
++
++    void wait_connection();
++    ssize_t read_all(std::uint8_t *buffer, const size_t &size);
++    void send(char const* data, size_t length);
++    ssize_t send_raw(char const* data, size_t length);
++
++private:
++    int listen_fd_;
++    int cli_fd_;
++};
++} // namespace anbox
++
++#endif
+diff --git a/external/libvncserver/others/common.h b/external/libvncserver/others/common.h
+new file mode 100755
+index 0000000..fb8f942
+--- /dev/null
++++ b/external/libvncserver/others/common.h
+@@ -0,0 +1,90 @@
++/*
++droid vnc server - Android VNC server
++Copyright (C) 2009 Jose Pereira <onaips@gmail.com>
++
++This library is free software; you can redistribute it and/or
++modify it under the terms of the GNU Lesser General Public
++License as published by the Free Software Foundation; either
++version 3 of the License, or (at your option) any later version.
++
++This library is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++Lesser General Public License for more details.
++
++You should have received a copy of the GNU Lesser General Public
++License along with this library; if not, write to the Free Software
++Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
++*/
++
++#ifndef COMMON_H
++#define COMMON_H
++
++#include <android/log.h>
++#ifndef __cplusplus
++
++#include <dirent.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include <unistd.h>
++#include <sys/mman.h>
++#include <sys/ioctl.h>
++
++#include <sys/stat.h>
++#include <sys/sysmacros.h>             /* For makedev() */
++
++#include <fcntl.h>
++#include <linux/fb.h>
++#include <linux/input.h>
++
++#include <assert.h>
++#include <errno.h>
++
++#include "screenFormat.h"
++
++#define L(...) do{ __android_log_print(ANDROID_LOG_INFO,"VNCserver",__VA_ARGS__);printf(__VA_ARGS__); } while (0);
++#endif
++
++struct fbinfo {
++    unsigned int version;
++    unsigned int bpp;
++    unsigned int size;
++    unsigned int width;
++    unsigned int height;
++    unsigned int red_offset;
++    unsigned int red_length;
++    unsigned int blue_offset;
++    unsigned int blue_length;
++    unsigned int green_offset;
++    unsigned int green_length;
++    unsigned int alpha_offset;
++    unsigned int alpha_length;
++} __attribute__((packed));
++
++typedef int (*init_fn_type)(void);
++typedef int (*close_fn_type)(void);
++typedef unsigned char * (*readfb_fn_type)(void);
++typedef unsigned char * (*checkfb_fn_type)(void);
++typedef screenFormat (*getscreenformat_fn_type)(void);
++
++void rotate(int);
++int getCurrentRotation();
++int isIdle();
++void setIdle(int i);
++void close_app();
++screenFormat screenformat;
++
++#ifdef NOAPP
++#define DVNC_FILES_PATH "/data/local/tmp"
++#define DVNC_LIB_PATH "/data/local/tmp"
++#else
++#define DVNC_FILES_PATH "/data/data/org.onaips.vnc/files/"
++#define DVNC_LIB_PATH "/data/data/org.onaips.vnc/lib/"
++#endif
++
++#define ARR_LEN(a) (sizeof(a)/sizeof(a)[0])
++static int compiled_sdks[] = {25};
++
++#endif
+diff --git a/external/libvncserver/others/gui.c b/external/libvncserver/others/gui.c
+new file mode 100755
+index 0000000..b08c7cc
+--- /dev/null
++++ b/external/libvncserver/others/gui.c
+@@ -0,0 +1,126 @@
++/*
++droid VNC server  - a vnc server for android
++Copyright (C) 2011 Jose Pereira <onaips@gmail.com>
++
++This library is free software; you can redistribute it and/or
++modify it under the terms of the GNU Lesser General Public
++License as published by the Free Software Foundation; either
++version 3 of the License, or (at your option) any later version.
++
++This library is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++Lesser General Public License for more details.
++
++You should have received a copy of the GNU Lesser General Public
++License along with this library; if not, write to the Free Software
++Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
++*/
++
++//this file implements a simple IPC connection with the Java GUI
++
++#include "gui.h"
++#include "common.h"
++
++#define SOCKET_ERROR        -1
++#define BUFFER_SIZE         1024
++#define QUEUE_SIZE          1
++
++int hServerSocket;  /* handle to socket */
++struct sockaddr_in Address; /* Internet socket address stuct */
++int nAddressSize = sizeof(struct sockaddr_in);
++char pBuffer[BUFFER_SIZE];
++static int nHostPort;
++
++int sendMsgToGui(char *buffer)
++{
++  int sock, n;
++  unsigned int length;
++  struct sockaddr_in server;
++
++  sock = socket(AF_INET, SOCK_DGRAM, 0);
++  if (sock < 0) perror("socket");
++
++  memset(&server,0,sizeof(server));
++  server.sin_family = AF_INET;
++  server.sin_addr.s_addr = inet_addr("127.0.0.1");
++  server.sin_port = htons(DEFAULT_IPC_RECV_PORT);
++  length = sizeof(struct sockaddr_in);
++
++  n = sendto(sock,buffer,strlen(buffer),0,(struct sockaddr *)&server,length);
++  if (n < 0) perror("Sendto");
++
++  close(sock);
++  return 0;
++}  
++
++int bindIPCserver()
++{
++  nHostPort=DEFAULT_IPC_SEND_PORT;
++
++  L("Starting IPC connection...");
++
++  /* make a socket */
++  hServerSocket=socket(AF_INET,SOCK_DGRAM,0);
++
++  if(hServerSocket == SOCKET_ERROR) {
++    L("Error creating socket\n");
++    return 0;
++  }
++
++  /* fill address struct */
++  Address.sin_addr.s_addr=INADDR_ANY;
++  Address.sin_port=htons(nHostPort);
++  Address.sin_family=AF_INET;
++
++
++  /* bind to a port */
++  if(bind(hServerSocket,(struct sockaddr*)&Address,sizeof(Address)) == SOCKET_ERROR)
++  {
++    L("\nCould not connect to IPC gui, another daemon already running?\n");
++    sendMsgToGui("~SHOW|Could not connect to IPC gui, another daemon already running?\n");
++
++    exit(-1);
++  }
++
++
++  L("binded to port %d\n",nHostPort);
++
++  pthread_t thread;
++  pthread_create( &thread,NULL,handle_connections,NULL);
++
++  return 1;
++}
++
++
++
++void *handle_connections()
++{
++  L("\nWaiting for a connection\n");
++  struct sockaddr_in from;
++  int fromlen = sizeof(struct sockaddr_in);
++  int n;
++
++  while (1) {
++    n = recvfrom(hServerSocket,pBuffer,BUFFER_SIZE,0,(struct sockaddr *)&from,&fromlen);
++    if (n < 0) perror("recvfrom");
++
++    //L("Recebido: %s\n",pBuffer);
++
++    if (strstr(pBuffer,"~PING|")!=NULL)
++    {
++      char *resp="~PONG|";
++      n = sendto(hServerSocket,resp,strlen(resp),
++                 0,(struct sockaddr *)&from,fromlen);
++      if (n  < 0) perror("sendto");
++    }
++    else if (strstr(pBuffer,"~KILL|")!=NULL)
++    close_app();
++  }
++}
++
++
++void unbindIPCserver()
++{
++  close(hServerSocket);
++}
+diff --git a/external/libvncserver/others/gui.h b/external/libvncserver/others/gui.h
+new file mode 100755
+index 0000000..c40423c
+--- /dev/null
++++ b/external/libvncserver/others/gui.h
+@@ -0,0 +1,41 @@
++/*
++droid VNC server  - a vnc server for android
++Copyright (C) 2011 Jose Pereira <onaips@gmail.com>
++
++This library is free software; you can redistribute it and/or
++modify it under the terms of the GNU Lesser General Public
++License as published by the Free Software Foundation; either
++version 3 of the License, or (at your option) any later version.
++
++This library is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++Lesser General Public License for more details.
++
++You should have received a copy of the GNU Lesser General Public
++License along with this library; if not, write to the Free Software
++Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
++*/
++
++#ifndef GUI_COMM_H
++#define GUI_COMM_H
++
++#include "common.h"
++
++#include <sys/types.h>
++#include <sys/socket.h>
++#include <netinet/in.h>
++#include <arpa/inet.h>
++#include <pthread.h>
++
++#define DEFAULT_IPC_RECV_PORT 13131
++#define DEFAULT_IPC_SEND_PORT 13132
++#define SOCK_PATH  "org.onaips.vnc.gui" //TODO put IPC working on unix sockets
++
++int sendMsgToGui(char *msg);
++
++
++int bindIPCserver();
++void unbindIPCserver();
++void *handle_connections();
++#endif
+diff --git a/external/libvncserver/others/input.c b/external/libvncserver/others/input.c
+new file mode 100755
+index 0000000..a892cb1
+--- /dev/null
++++ b/external/libvncserver/others/input.c
+@@ -0,0 +1,433 @@
++/*
++droid VNC server  - a vnc server for android
++Copyright (C) 2011 Jose Pereira <onaips@gmail.com>
++
++This library is free software; you can redistribute it and/or
++modify it under the terms of the GNU Lesser General Public
++License as published by the Free Software Foundation; either
++version 3 of the License, or (at your option) any later version.
++
++This library is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++Lesser General Public License for more details.
++
++You should have received a copy of the GNU Lesser General Public
++License along with this library; if not, write to the Free Software
++Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
++*/
++
++#include "input.h"
++#include "anbox_input.h"
++
++int inputfd = -1;
++// keyboard code modified from remote input by http://www.math.bme.hu/~morap/RemoteInput/
++
++// q,w,e,r,t,y,u,i,o,p,a,s,d,f,g,h,j,k,l,z,x,c,v,b,n,m
++int qwerty[] = {30,48,46,32,18,33,34,35,23,36,37,38,50,49,24,25,16,19,31,20,22,47,17,45,21,44};
++// ,!,",#,$,%,&,',(,),*,+,,,-,.,/
++int spec1[] = {57,2,40,4,5,6,8,40,10,11,9,13,51,12,52,52};
++int spec1sh[] = {0,1,1,1,1,1,1,0,1,1,1,1,0,0,0,1};
++// :,;,<,=,>,?,@
++int spec2[] = {39,39,227,13,228,53,3};
++int spec2sh[] = {1,0,1,1,1,1,1};
++// [,\,],^,_,`
++int spec3[] = {26,43,27,7,12,399};
++int spec3sh[] = {0,0,0,1,1,0};
++// {,|,},~
++int spec4[] = {26,43,27,215,14};
++int spec4sh[] = {1,1,1,1,0};
++
++
++void initInput(int width, int height)
++{
++	L("---Initializing uinput...---\n");
++	
++    static char* input_node[2] = {"anbox_input", "/dev/input/event0"};
++    anbox_init_input(2, input_node);
++    
++    L("anbox_init_input exit ...\n");
++
++}
++
++
++int keysym2scancode(rfbBool down, rfbKeySym c, rfbClientPtr cl, int *sh, int *alt)
++{
++	int real=1;
++	if ('a' <= c && c <= 'z')
++		return qwerty[c-'a'];
++	if ('A' <= c && c <= 'Z')
++	{
++		(*sh)=1;
++		return qwerty[c-'A'];
++	}
++	if ('1' <= c && c <= '9')
++		return c-'1'+2;
++	if (c == '0')
++		return 11;
++	if (32 <= c && c <= 47)
++	{ 
++		(*sh) = spec1sh[c-32];
++		return spec1[c-32];
++	}
++	if (58 <= c && c <= 64)
++	{
++		(*sh) = spec2sh[c-58];
++		return spec2[c-58];
++	} 
++	if (91 <= c && c <= 96)
++	{ 
++		(*sh) = spec3sh[c-91];
++		return spec3[c-91];
++	}	 
++	if (123 <= c && c <= 127)
++	{
++		(*sh) = spec4sh[c-123]; 
++		return spec4[c-123];
++	} 
++	switch(c)
++	{
++		case 0xff08:
++			return 14;// backspace
++		case 0xff09: 
++			return 15;// tab
++		case 1: 
++			(*alt)=1;
++			return 34;// ctrl+a
++		case 3: 
++			(*alt)=1; 
++			return 46;// ctrl+c	
++		case 4: 
++			(*alt)=1; 
++			return 32;// ctrl+d
++		case 18:
++			(*alt)=1; 
++			return 31;// ctrl+r
++		case 0xff0D: 
++			return 28;// enter
++		case 0xff1B: 
++			return 158;// esc -> back
++		case 0xFF51: 
++			return 105;// left -> DPAD_LEFT	
++		case 0xFF53: 
++			return 106;// right -> DPAD_RIGHT 
++		case 0xFF54: 
++			return 108;// down -> DPAD_DOWN	
++		case 0xFF52: 
++			return 103;// up -> DPAD_UP
++		//case 360: 
++		//	return 232;// end -> DPAD_CENTER (ball click)
++		case 0xff50:
++			return KEY_HOME;// home 
++		case 0xFFC8: 
++			rfbShutdownServer(cl->screen,TRUE);
++			return 0; //F11 disconnect
++		case 0xFFC9:	
++			L("F12 closing...");		
++			exit(0); //F10 closes daemon
++			break;
++		case 0xffc1: 
++			down?rotate(-1):0; 
++			return 0; // F4 rotate 
++		case 0xffff: 
++			return 158;// del -> back
++		case 0xff55: 
++			return 229;// PgUp -> menu
++		case 0xffcf: 
++			return 127;// F2 -> search
++		case 0xffe3: 
++			return 127;// left ctrl -> search
++		case 0xff56: 
++			return 61;// PgUp -> call
++		case 0xff57: 
++			return 107;// End -> endcall
++		case 0xffc2: 
++			return 211;// F5 -> focus
++		case 0xffc3: 
++			return 212;// F6 -> camera
++		case 0xffc4: 
++			return 150;// F7 -> explorer
++		case 0xffc5: 
++			return 155;// F8 -> envelope
++
++		case 50081:
++		case 225: 
++			(*alt)=1;
++			if (real) 
++				return 48; //a with acute
++			return 30; //a with acute -> a with ring above
++			
++		case 50049: 
++		case 193:
++			(*sh)=1; 
++			(*alt)=1; 
++			if (real) 
++				return 48; //A with acute 
++			return 30; //A with acute -> a with ring above
++			
++		case 50089:
++		case 233: 
++			(*alt)=1;
++			return 18; //e with acute
++			
++		case 50057:	
++		case 201:
++			(*sh)=1;
++			(*alt)=1;
++			return 18; //E with acute
++			
++		case 50093:
++		case 0xffbf:
++			(*alt)=1; 
++			if (real)
++				return 36; //i with acute 
++			return 23; //i with acute -> i with grave
++			
++		case 50061:
++		case 205: 
++			(*sh)=1;
++			(*alt)=1; 
++			if (real)
++				return 36; //I with acute 
++			return 23; //I with acute -> i with grave
++			
++		case 50099: 
++		case 243:
++			(*alt)=1; 
++			if (real) 
++				return 16; //o with acute 
++			return 24; //o with acute -> o with grave
++			
++		case 50067: 
++		case 211:
++			(*sh)=1;
++			(*alt)=1; 
++			if (real) 
++				return 16; //O with acute 
++			return 24; //O with acute -> o with grave
++			
++		case 50102:
++		case 246: 
++			(*alt)=1;
++			return 25; //o with diaeresis
++			
++		case 50070:
++		case 214: 
++			(*sh)=1; 
++			(*alt)=1; 
++			return 25; //O with diaeresis
++		
++		case 50577: 
++		case 245:
++			(*alt)=1; 
++			if (real)
++				return 19; //Hungarian o 
++			return 25; //Hungarian o -> o with diaeresis
++			
++		case 50576:
++		case 213: 
++			(*sh)=1;
++			(*alt)=1; 
++			if (real) 
++				return 19; //Hungarian O 
++			return 25; //Hungarian O -> O with diaeresis
++			
++		case 50106:
++		//case 0xffbe:
++		//	(*alt)=1; 
++		// 	if (real) 
++		//		return 17; //u with acute 
++		// 	return 22; //u with acute -> u with grave
++		case 50074:
++		case 218: 
++			(*sh)=1;
++			(*alt)=1; 
++			if (real) 
++				return 17; //U with acute 
++			return 22; //U with acute -> u with grave
++		case 50108:
++		case 252: 
++			(*alt)=1; 
++			return 47; //u with diaeresis
++			
++		case 50076: 
++		case 220:
++			(*sh)=1;
++			(*alt)=1; 
++			return 47; //U with diaeresis
++			
++		case 50609:
++		case 251: 
++			(*alt)=1; 
++			if (real) 
++				return 45; //Hungarian u 
++			return 47; //Hungarian u -> u with diaeresis
++			
++		case 50608:
++		case 219: 
++			(*sh)=1;
++			(*alt)=1; 
++			if (real) 
++				return 45; //Hungarian U 
++			return 47; //Hungarian U -> U with diaeresis
++
++	}
++	return 0;
++}
++
++
++void keyEvent(rfbBool down, rfbKeySym key, rfbClientPtr cl)
++{
++	int code;
++	L("Got keysym: %04x (down=%d)\n", (unsigned int)key, (int)down);
++
++	setIdle(0);
++	int sh = 0;
++	int alt = 0;
++
++	if ((code = keysym2scancode(down, key, cl,&sh,&alt)))
++	{
++
++		int ret=0;
++
++		if (key && down)
++		{
++			if (sh) suinput_press(inputfd, 42); //left shift
++			if (alt) suinput_press(inputfd, 56); //left alt
++			
++			//suinput_write(inputfd, EV_SYN, SYN_REPORT, 0);
++
++			L("Calling suinput_press, code: %04x\n", (unsigned int)code);
++			ret=suinput_press(inputfd,code);
++			if (ret != 0) {
++				L("Error: %d (%s)\n", errno, strerror(errno));
++			}
++
++			//suinput_write(inputfd, EV_SYN, SYN_REPORT, 0);
++
++			L("Calling suinput_release, code: %04x\n", (unsigned int)code);
++			ret=suinput_release(inputfd,code);
++			if (ret != 0) {
++				L("Error: %d (%s)\n", errno, strerror(errno));
++			}
++			//suinput_write(inputfd, EV_SYN, SYN_REPORT, 0);
++
++			if (alt) suinput_release(inputfd, 56); //left alt
++			if (sh) suinput_release(inputfd, 42); //left shift
++			
++			//suinput_write(inputfd, EV_SYN, SYN_REPORT, 0);
++		}
++		else
++		;//ret=suinput_release(inputfd,code);
++
++		L("injectKey (%d, %d) ret=%d\n", code , down,ret);		
++	}
++}
++
++
++
++void ptrEvent(int buttonMask, int x, int y, rfbClientPtr cl)
++{
++
++	static int leftClicked=0,rightClicked=0,middleClicked=0;
++
++	if ( inputfd == -1 )
++		return;
++			
++	setIdle(0);
++	//transformTouchCoordinates(&x,&y,cl->screen->width,cl->screen->height);
++
++	if((buttonMask & 1)&& leftClicked) {//left btn clicked and moving
++		static int i=0;
++		i=i+1;
++
++		if (i%10==1)//some tweak to not report every move event
++		{
++			suinput_write(inputfd, EV_ABS, ABS_X, x);
++			suinput_write(inputfd, EV_ABS, ABS_Y, y);
++			suinput_write(inputfd, EV_SYN, SYN_REPORT, 0);
++		}
++	}
++	else if (buttonMask & 1)//left btn clicked
++	{
++		leftClicked = 1;
++
++		suinput_write(inputfd, EV_ABS, ABS_X, x);
++		suinput_write(inputfd, EV_ABS, ABS_Y, y);
++		suinput_write(inputfd, EV_KEY, BTN_TOUCH, 1);
++		suinput_write(inputfd, EV_SYN, SYN_REPORT, 0);
++	}
++	else if (leftClicked)//left btn released
++	{
++		leftClicked=0;
++		suinput_write(inputfd, EV_ABS, ABS_X, x);
++		suinput_write(inputfd, EV_ABS, ABS_Y, y);
++		suinput_write(inputfd,EV_KEY,BTN_TOUCH,0);
++		suinput_write(inputfd, EV_SYN, SYN_REPORT, 0);
++	}
++
++	if (buttonMask & 4)//right btn clicked
++	{
++		rightClicked=1;
++		suinput_press(inputfd,158); //back key
++		suinput_write(inputfd, EV_SYN, SYN_REPORT, 0);
++	}
++	else if (rightClicked)//right button released
++	{
++		rightClicked=0;
++		suinput_release(inputfd,158);
++		suinput_write(inputfd, EV_SYN, SYN_REPORT, 0);
++	}
++
++	if (buttonMask & 2)//mid btn clicked
++	{
++		middleClicked=1;
++		suinput_press( inputfd,KEY_END);
++		suinput_write(inputfd, EV_SYN, SYN_REPORT, 0);
++	}
++	else if (middleClicked)// mid btn released
++	{
++		middleClicked=0;
++		suinput_release( inputfd,KEY_END);
++		suinput_write(inputfd, EV_SYN, SYN_REPORT, 0);
++	}
++}
++
++
++inline void transformTouchCoordinates(int *x, int *y,int width,int height)
++{
++	int scale=4096.0;
++	int old_x=*x,old_y=*y;
++	int rotation=getCurrentRotation();
++
++	if (rotation==0)
++	{	
++		*x = old_x*scale/width-scale/2.0;
++		*y = old_y*scale/height-scale/2.0;
++	}
++	else if (rotation==90)
++	{
++		*x =old_y*scale/height-scale/2.0;
++		*y = (width - old_x)*scale/width-scale/2.0;
++	}
++	else if (rotation==180)
++	{
++		*x =(width - old_x)*scale/width-scale/2.0;
++		*y =(height - old_y)*scale/height-scale/2.0;
++	}
++	else if (rotation==270)
++	{
++		*y =old_x*scale/width-scale/2.0; 
++		*x =(height - old_y)*scale/height-scale/2.0;
++	}
++
++}
++
++
++void cleanupInput()
++{
++	if(inputfd != -1)
++	{
++		suinput_close(inputfd);
++	}
++}
+diff --git a/external/libvncserver/others/input.h b/external/libvncserver/others/input.h
+new file mode 100755
+index 0000000..a716b4c
+--- /dev/null
++++ b/external/libvncserver/others/input.h
+@@ -0,0 +1,38 @@
++/*
++droid VNC server  - a vnc server for android
++Copyright (C) 2011 Jose Pereira <onaips@gmail.com>
++
++This library is free software; you can redistribute it and/or
++modify it under the terms of the GNU Lesser General Public
++License as published by the Free Software Foundation; either
++version 3 of the License, or (at your option) any later version.
++
++This library is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++Lesser General Public License for more details.
++
++You should have received a copy of the GNU Lesser General Public
++License along with this library; if not, write to the Free Software
++Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
++*/
++
++#ifndef KEYMANIP_H
++#define KEYMANIP_H
++
++#include "common.h"
++#include "gui.h"
++
++#include "rfb/rfb.h"
++#include "suinput.h"
++
++#define BUS_VIRTUAL 0x06
++
++void initInput();
++int keysym2scancode(rfbBool down, rfbKeySym c, rfbClientPtr cl, int *sh, int *alt);
++void transformTouchCoordinates(int *x, int *y,int,int);
++void ptrEvent(int buttonMask, int x, int y, rfbClientPtr cl);
++void keyEvent(rfbBool down, rfbKeySym key, rfbClientPtr cl);
++void cleanupInput();
++
++#endif
+diff --git a/external/libvncserver/others/linux/uinput.h b/external/libvncserver/others/linux/uinput.h
+new file mode 100755
+index 0000000..43f98ac
+--- /dev/null
++++ b/external/libvncserver/others/linux/uinput.h
+@@ -0,0 +1,197 @@
++/****************************************************************************
++ ****************************************************************************
++ ***
++ ***   This header was automatically generated from a Linux kernel header
++ ***   of the same name, to make information necessary for userspace to
++ ***   call into the kernel available to libc.  It contains only constants,
++ ***   structures, and macros generated from the original header, and thus,
++ ***   contains no copyrightable information.
++ ***
++ ****************************************************************************
++ ****************************************************************************/
++#ifndef __UINPUT_H_
++#define __UINPUT_H_
++/*
++ *  User level driver support for input subsystem
++ *
++ * Heavily based on evdev.c by Vojtech Pavlik
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
++ *
++ * Author: Aristeu Sergio Rozanski Filho <aris@cathedrallabs.org>
++ *
++ * Changes/Revisions:
++ *	0.3	24/05/2006 (Anssi Hannula <anssi.hannulagmail.com>)
++ *		- update ff support for the changes in kernel interface
++ *		- add UINPUT_VERSION
++ *	0.2	16/10/2004 (Micah Dowty <micah@navi.cx>)
++ *		- added force feedback support
++ *             - added UI_SET_PHYS
++ *	0.1	20/06/2002
++ *		- first public version
++ */
++
++#include <linux/input.h>
++
++#define UINPUT_VERSION 3
++
++#ifdef __KERNEL__
++#define UINPUT_MINOR		223
++#define UINPUT_NAME		"uinput"
++#define UINPUT_BUFFER_SIZE	16
++#define UINPUT_NUM_REQUESTS	16
++
++enum uinput_state { UIST_NEW_DEVICE, UIST_SETUP_COMPLETE, UIST_CREATED };
++
++struct uinput_request {
++	int			id;
++	int			code;	/* UI_FF_UPLOAD, UI_FF_ERASE */
++
++	int			retval;
++	struct completion	done;
++
++	union {
++		int		effect_id;
++		struct {
++			struct ff_effect *effect;
++			struct ff_effect *old;
++		} upload;
++	} u;
++};
++
++struct uinput_device {
++	struct input_dev	*dev;
++	struct mutex		mutex;
++	enum uinput_state	state;
++	wait_queue_head_t	waitq;
++	unsigned char		ready;
++	unsigned char		head;
++	unsigned char		tail;
++	struct input_event	buff[UINPUT_BUFFER_SIZE];
++	int			ff_effects_max;
++
++	struct uinput_request	*requests[UINPUT_NUM_REQUESTS];
++	wait_queue_head_t	requests_waitq;
++	spinlock_t		requests_lock;
++};
++#endif	/* __KERNEL__ */
++
++struct uinput_ff_upload {
++	int		request_id;
++	int		retval;
++	struct	ff_effect	effect;
++	struct	ff_effect	old;
++};
++
++struct uinput_ff_erase {
++	int request_id;
++	int retval;
++	int effect_id;
++};
++
++/* ioctl */
++#define UINPUT_IOCTL_BASE	'U'
++#define UI_DEV_CREATE		_IO(UINPUT_IOCTL_BASE, 1)
++#define UI_DEV_DESTROY		_IO(UINPUT_IOCTL_BASE, 2)
++
++#define UI_SET_EVBIT		_IOW(UINPUT_IOCTL_BASE, 100, int)
++#define UI_SET_KEYBIT		_IOW(UINPUT_IOCTL_BASE, 101, int)
++#define UI_SET_RELBIT		_IOW(UINPUT_IOCTL_BASE, 102, int)
++#define UI_SET_ABSBIT		_IOW(UINPUT_IOCTL_BASE, 103, int)
++#define UI_SET_MSCBIT		_IOW(UINPUT_IOCTL_BASE, 104, int)
++#define UI_SET_LEDBIT		_IOW(UINPUT_IOCTL_BASE, 105, int)
++#define UI_SET_SNDBIT		_IOW(UINPUT_IOCTL_BASE, 106, int)
++#define UI_SET_FFBIT		_IOW(UINPUT_IOCTL_BASE, 107, int)
++#define UI_SET_PHYS			_IOW(UINPUT_IOCTL_BASE, 108, char*)
++#define UI_SET_SWBIT		_IOW(UINPUT_IOCTL_BASE, 109, int)
++
++// UI_SET_PROPBIT is normally defined in /uapi/linux/uinput.h
++// but we need it for proper touch support */
++#define UI_SET_PROPBIT      _IOW(UINPUT_IOCTL_BASE, 110, int)
++
++#define INPUT_PROP_POINTER      0x00
++#define INPUT_PROP_DIRECT       0x01
++//#define INPUT_PROP_BUTTONPAD    0x02
++//#define INPUT_PROP_SEMI_MT      0x03
++//#define INPUT_PROP_MAX          0x1f
++//#define INPUT_PROP_CNT          (INPUT_PROP_MAX + 1)
++
++#define UI_BEGIN_FF_UPLOAD	_IOWR(UINPUT_IOCTL_BASE, 200, struct uinput_ff_upload)
++#define UI_END_FF_UPLOAD	_IOW(UINPUT_IOCTL_BASE, 201, struct uinput_ff_upload)
++#define UI_BEGIN_FF_ERASE	_IOWR(UINPUT_IOCTL_BASE, 202, struct uinput_ff_erase)
++#define UI_END_FF_ERASE		_IOW(UINPUT_IOCTL_BASE, 203, struct uinput_ff_erase)
++
++/*
++ * To write a force-feedback-capable driver, the upload_effect
++ * and erase_effect callbacks in input_dev must be implemented.
++ * The uinput driver will generate a fake input event when one of
++ * these callbacks are invoked. The userspace code then uses
++ * ioctls to retrieve additional parameters and send the return code.
++ * The callback blocks until this return code is sent.
++ *
++ * The described callback mechanism is only used if ff_effects_max
++ * is set.
++ *
++ * To implement upload_effect():
++ *   1. Wait for an event with type == EV_UINPUT and code == UI_FF_UPLOAD.
++ *      A request ID will be given in 'value'.
++ *   2. Allocate a uinput_ff_upload struct, fill in request_id with
++ *      the 'value' from the EV_UINPUT event.
++ *   3. Issue a UI_BEGIN_FF_UPLOAD ioctl, giving it the
++ *      uinput_ff_upload struct. It will be filled in with the
++ *      ff_effects passed to upload_effect().
++ *   4. Perform the effect upload, and place a return code back into
++        the uinput_ff_upload struct.
++ *   5. Issue a UI_END_FF_UPLOAD ioctl, also giving it the
++ *      uinput_ff_upload_effect struct. This will complete execution
++ *      of our upload_effect() handler.
++ *
++ * To implement erase_effect():
++ *   1. Wait for an event with type == EV_UINPUT and code == UI_FF_ERASE.
++ *      A request ID will be given in 'value'.
++ *   2. Allocate a uinput_ff_erase struct, fill in request_id with
++ *      the 'value' from the EV_UINPUT event.
++ *   3. Issue a UI_BEGIN_FF_ERASE ioctl, giving it the
++ *      uinput_ff_erase struct. It will be filled in with the
++ *      effect ID passed to erase_effect().
++ *   4. Perform the effect erasure, and place a return code back
++ *      into the uinput_ff_erase struct.
++ *   5. Issue a UI_END_FF_ERASE ioctl, also giving it the
++ *      uinput_ff_erase_effect struct. This will complete execution
++ *      of our erase_effect() handler.
++ */
++
++/*
++ * This is the new event type, used only by uinput.
++ * 'code' is UI_FF_UPLOAD or UI_FF_ERASE, and 'value'
++ * is the unique request ID. This number was picked
++ * arbitrarily, above EV_MAX (since the input system
++ * never sees it) but in the range of a 16-bit int.
++ */
++#define EV_UINPUT		0x0101
++#define UI_FF_UPLOAD	1
++#define UI_FF_ERASE		2
++
++#define UINPUT_MAX_NAME_SIZE 80
++struct uinput_user_dev {
++	char	name[UINPUT_MAX_NAME_SIZE];
++	struct	input_id id;
++	int		ff_effects_max;
++	int		absmax[ABS_MAX + 1];
++	int		absmin[ABS_MAX + 1];
++	int		absfuzz[ABS_MAX + 1];
++	int		absflat[ABS_MAX + 1];
++};
++#endif	/* __UINPUT_H_ */
+diff --git a/external/libvncserver/others/screenFormat.h b/external/libvncserver/others/screenFormat.h
+new file mode 100644
+index 0000000..98d87bf
+--- /dev/null
++++ b/external/libvncserver/others/screenFormat.h
+@@ -0,0 +1,31 @@
++#ifndef SCREEN_FORMAT_H
++#define SCREEN_FORMAT_H
++
++#include <stdint.h>
++
++
++typedef struct _screenFormat
++{
++
++  uint16_t width;
++  uint16_t height;
++
++  uint8_t bitsPerPixel;
++
++  uint16_t redMax;
++  uint16_t greenMax;
++  uint16_t blueMax;
++  uint16_t alphaMax;
++
++  uint8_t redShift;
++  uint8_t greenShift;
++  uint8_t blueShift;
++  uint8_t alphaShift;
++
++  uint32_t size;
++
++  uint32_t pad;
++
++} screenFormat;
++
++#endif
+diff --git a/external/libvncserver/others/suinput/suinput.c b/external/libvncserver/others/suinput/suinput.c
+new file mode 100755
+index 0000000..da1c0b3
+--- /dev/null
++++ b/external/libvncserver/others/suinput/suinput.c
+@@ -0,0 +1,215 @@
++/*
++suinput - Simple C-API to the Linux uinput-system.
++Copyright (C) 2009 Tuomas Räsänen <tuos@codegrove.org>
++
++This library is free software; you can redistribute it and/or
++modify it under the terms of the GNU Lesser General Public
++License as published by the Free Software Foundation; either
++version 3 of the License, or (at your option) any later version.
++
++This library is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++Lesser General Public License for more details.
++
++You should have received a copy of the GNU Lesser General Public
++License along with this library; if not, write to the Free Software
++Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
++*/
++
++#include <errno.h>
++#include <string.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <linux/uinput.h>
++#include <stdio.h>
++#include "suinput.h"
++#include "anbox_input.h"
++
++char* UINPUT_FILEPATHS[] = {
++    "/android/dev/uinput",
++    "/dev/uinput",
++    "/dev/input/uinput",
++    "/dev/misc/uinput",
++};
++#define UINPUT_FILEPATHS_COUNT (sizeof(UINPUT_FILEPATHS) / sizeof(char*))
++
++int suinput_write(int uinput_fd, uint16_t type, uint16_t code, int32_t value)
++{
++
++    anbox_send_kbd_event(type, code, value);
++
++    return 0;
++}
++
++int suinput_write_syn(int uinput_fd, uint16_t type, uint16_t code, int32_t value)
++{
++    if (suinput_write(uinput_fd, type, code, value))
++        return -1;
++    return suinput_write(uinput_fd, EV_SYN, SYN_REPORT, 0);
++}
++
++int suinput_open(const char* device_name, const struct input_id* id, int width, int height)
++{
++    int original_errno = 0;
++    int uinput_fd = -1;
++    struct uinput_user_dev user_dev;
++    int i;
++
++    for (i = 0; i < UINPUT_FILEPATHS_COUNT; ++i) {
++        uinput_fd = open(UINPUT_FILEPATHS[i], O_WRONLY | O_NONBLOCK);
++        if (uinput_fd != -1)
++            break;
++    }
++
++    if (uinput_fd == -1)
++        return -1;
++
++
++
++    /* Set device to handle following types of events: */
++
++    /* Key and button events */
++     if (ioctl(uinput_fd, UI_SET_EVBIT, EV_KEY) == -1)
++         goto err;
++//
++//     /* Key and button repetition events */
++     if (ioctl(uinput_fd, UI_SET_EVBIT, EV_REP) == -1)
++         goto err;
++//
++//     /* Relative pointer motions */
++//     if (ioctl(uinput_fd, UI_SET_EVBIT, EV_REL) == -1)
++//         goto err;
++
++    /* Absolute pointer motions */
++
++    if (ioctl(uinput_fd, UI_SET_EVBIT, EV_ABS) == -1)
++        goto err;
++
++    /* Synchronization events, this is probably set implicitely too. */
++    if (ioctl(uinput_fd, UI_SET_EVBIT, EV_SYN) == -1)
++        goto err;
++
++
++
++    /* Configure device to handle relative x and y axis. */
++//     if (ioctl(uinput_fd, UI_SET_RELBIT, REL_X) == -1)
++//         goto err;
++//     if (ioctl(uinput_fd, UI_SET_RELBIT, REL_Y) == -1)
++//         goto err;
++
++    /* Configure device to handle absolute x and y axis. */
++    if (ioctl(uinput_fd, UI_SET_ABSBIT, ABS_X) == -1)
++        goto err;
++    if (ioctl(uinput_fd, UI_SET_ABSBIT, ABS_Y) == -1)
++        goto err;
++
++    /* Configure device as a touch device */
++    if (ioctl(uinput_fd, UI_SET_PROPBIT, INPUT_PROP_DIRECT) == -1)
++        goto err;
++
++    /* Configure device to handle all keys, see linux/input.h. */
++    for (i = 0; i < KEY_MAX; i++) {
++        if (ioctl(uinput_fd, UI_SET_KEYBIT, i) == -1)
++            goto err;
++    }
++
++    /* Set device-specific information. */
++    memset(&user_dev, 0, sizeof(user_dev));
++    strncpy(user_dev.name, device_name, UINPUT_MAX_NAME_SIZE);
++    user_dev.id.bustype = id->bustype;
++    user_dev.id.vendor = id->vendor;
++    user_dev.id.product = id->product;
++    user_dev.id.version = id->version;
++
++    user_dev.absmin[ABS_X] = 0;
++    user_dev.absmax[ABS_X] = width;
++    user_dev.absmin[ABS_Y] = 0;
++    user_dev.absmax[ABS_Y] = height;
++
++    if (write(uinput_fd, &user_dev, sizeof(user_dev)) != sizeof(user_dev))
++        goto err;
++
++
++    if (ioctl(uinput_fd, UI_DEV_CREATE) == -1)
++        goto err;
++
++    /*
++  The reason for generating a small delay is that creating succesfully
++  an uinput device does not guarantee that the device is ready to process
++  input events. It's probably due the asynchronous nature of the udev.
++  However, my experiments show that the device is not ready to process input
++  events even after a device creation event is received from udev.
++  */
++
++    //sleep(2);
++
++    return uinput_fd;
++
++    err:
++
++    /*
++    At this point, errno is set for some reason. However, cleanup-actions
++    can also fail and reset errno, therefore we store the original one
++    and reset it before returning.
++  */
++    original_errno = errno;
++
++    /* Cleanup. */
++    close(uinput_fd); /* Might fail, but we don't care anymore at this point. */
++
++    errno = original_errno;
++    return -1;
++}
++
++int suinput_close(int uinput_fd)
++{
++    /*
++    Sleep before destroying the device because there still can be some
++    unprocessed events. This is not the right way, but I am still
++    looking for better ways. The question is: how to know whether there
++    are any unprocessed uinput events?
++   */
++    sleep(2);
++
++    if (ioctl(uinput_fd, UI_DEV_DESTROY) == -1) {
++        close(uinput_fd);
++        return -1;
++    }
++
++    if (close(uinput_fd) == -1)
++        return -1;
++
++    return 0;
++}
++
++int suinput_move_pointer(int uinput_fd, int32_t x, int32_t y)
++{
++    if (suinput_write(uinput_fd, EV_REL, REL_X, x))
++        return -1;
++    return suinput_write_syn(uinput_fd, EV_REL, REL_Y, y);
++}
++
++int suinput_set_pointer(int uinput_fd, int32_t x, int32_t y)
++{
++    if (suinput_write(uinput_fd, EV_ABS, ABS_X, x))
++        return -1;
++    return suinput_write_syn(uinput_fd, EV_ABS, ABS_Y, y);
++}
++
++int suinput_press(int uinput_fd, uint16_t code)
++{
++    return suinput_write(uinput_fd, EV_KEY, code, 1);
++}
++
++int suinput_release(int uinput_fd, uint16_t code)
++{
++    return suinput_write(uinput_fd, EV_KEY, code, 0);
++}
++
++int suinput_click(int uinput_fd, uint16_t code)
++{
++    if (suinput_press(uinput_fd, code))
++        return -1;
++    return suinput_release(uinput_fd, code);
++}
+diff --git a/external/libvncserver/others/suinput/suinput.h b/external/libvncserver/others/suinput/suinput.h
+new file mode 100755
+index 0000000..1e6f0d3
+--- /dev/null
++++ b/external/libvncserver/others/suinput/suinput.h
+@@ -0,0 +1,95 @@
++/*
++suinput - Simple C-API to the Linux uinput-system.
++Copyright (C) 2009 Tuomas Räsänen <tuos@codegrove.org>
++
++This library is free software; you can redistribute it and/or
++modify it under the terms of the GNU Lesser General Public
++License as published by the Free Software Foundation; either
++version 3 of the License, or (at your option) any later version.
++
++This library is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++Lesser General Public License for more details.
++
++You should have received a copy of the GNU Lesser General Public
++License along with this library; if not, write to the Free Software
++Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
++*/
++
++#ifndef SUINPUT_H
++#define SUINPUT_H
++#include <stdint.h>
++
++#include <linux/input.h>
++#include <linux/uinput.h>
++
++int suinput_write(int uinput_fd, uint16_t type, uint16_t code, int32_t value);
++/*
++  Creates and opens a connection to the event device. Returns an uinput file
++  descriptor on success. On error, -1 is returned, and errno is set
++  appropriately.
++*/
++int suinput_open(const char* device_name, const struct input_id* id, int width, int height);
++
++/* 
++  Destroys and closes a connection to the event device. Returns 0 on success.
++  On error, -1 is returned, and errno is set appropriately.
++   
++  Behaviour is undefined when passed a file descriptor not returned by
++  suinput_open().
++*/
++int suinput_close(int uinput_fd);
++
++/*
++  Sends a relative pointer motion event to the event device. Values increase
++  towards right-bottom. Returns 0 on success. On error, -1 is returned, and
++  errno is set appropriately.
++
++  Behaviour is undefined when passed a file descriptor not returned by
++  suinput_open().
++*/
++int suinput_move_pointer(int uinput_fd, int32_t x, int32_t y);
++int suinput_set_pointer(int uinput_fd, int32_t x, int32_t y);
++
++/*
++  Sends a press event to the event device. Event is repeated after
++  a short delay until a release event is sent. Returns 0 on success.
++  On error, -1 is returned, and errno is set appropriately.
++
++  Behaviour is undefined when passed a file descriptor not returned by
++  suinput_open().
++
++  All possible values of `code` are defined in linux/input.h prefixed
++  by KEY_ or BTN_.
++*/
++int suinput_press(int uinput_fd, uint16_t code);
++
++/*
++  Sends a release event to the event device. Returns 0 on success.
++  On error, -1 is returned, and errno is set appropriately.
++
++  Behaviour is undefined when passed a file descriptor not returned by
++  suinput_open().
++
++  All possible values of `code` are defined in linux/input.h prefixed
++  by KEY_ or BTN_.
++*/
++int suinput_release(int uinput_fd, uint16_t code);
++
++/*
++  Sends a press and release events to the event device. Returns 0 on
++  success. On error, -1 is returned, and errno is set appropriately.
++
++  Behaviour is undefined when passed a file descriptor not returned by
++  suinput_open().
++
++  All possible values of `code` are defined in linux/input.h prefixed
++  by KEY_ or BTN_.
++
++  This function is provided as a convenience and has effectively the
++  same result as calling suinput_press() and suinput_release() sequentially.
++*/
++int suinput_click(int uinput_fd, uint16_t code);
++
++#endif /* SUINPUT_H */
+diff --git a/external/libvncserver/rfb/rfb.h b/external/libvncserver/rfb/rfb.h
+old mode 100644
+new mode 100755
+index f7919c6..cc3abea
+--- a/external/libvncserver/rfb/rfb.h
++++ b/external/libvncserver/rfb/rfb.h
+@@ -43,6 +43,8 @@ extern "C"
+ #include <string.h>
+ #include <rfb/rfbproto.h>
+ 
++#define MAX_SCREEN_L 1920
++
+ #if defined(ANDROID) || defined(LIBVNCSERVER_HAVE_ANDROID)
+ #include <arpa/inet.h>
+ #include <sys/select.h>
+@@ -695,6 +697,9 @@ typedef struct _rfbClientRec {
+     wsCtx     *wsctx;
+     char *wspath;                          /* Requests path component */
+ #endif
++
++    char alphaBuf[MAX_SCREEN_L][MAX_SCREEN_L];
++    int supportAlpha;
+ } rfbClientRec, *rfbClientPtr;
+ 
+ /**
+@@ -720,10 +725,10 @@ typedef struct _rfbClientRec {
+ #define Swap24(l) ((((l) & 0xff) << 16) | (((l) >> 16) & 0xff) | \
+                    (((l) & 0x00ff00)))
+ 
+-#define Swap32(l) (((l) >> 24) | \
++#define Swap32(l) ((((l) >> 24) & 0x000000ff)| \
+                    (((l) & 0x00ff0000) >> 8)  | \
+                    (((l) & 0x0000ff00) << 8)  | \
+-                   ((l) << 24))
++                   (((l) & 0x000000ff) << 24))
+ 
+ 
+ extern char rfbEndianTest;
+@@ -999,8 +1004,19 @@ extern rfbBool rfbProcessSizeArguments(int* width,int* height,int* bpp,int* argc
+ /* main.c */
+ 
+ extern void rfbLogEnable(int enabled);
++#ifdef __ANDROID__
++/* for android log*/
++#include <android/log.h>
++#include <cutils/log.h>
++
++#define rfbLog(...) ALOGI(__VA_ARGS__)
++#define rfbErr(...) ALOGE(__VA_ARGS__)
++#else
++
+ typedef void (*rfbLogProc)(const char *format, ...);
+ extern rfbLogProc rfbLog, rfbErr;
++#endif
++
+ extern void rfbLogPerror(const char *str);
+ 
+ void rfbScheduleCopyRect(rfbScreenInfoPtr rfbScreen,int x1,int y1,int x2,int y2,int dx,int dy);
+diff --git a/hardware/libhardware/modules/gralloc/Android.mk b/hardware/libhardware/modules/gralloc/Android.mk
+index 092e851..a2738c2 100644
+--- a/hardware/libhardware/modules/gralloc/Android.mk
++++ b/hardware/libhardware/modules/gralloc/Android.mk
+@@ -19,13 +19,29 @@ LOCAL_PATH := $(call my-dir)
+ # hw/<OVERLAY_HARDWARE_MODULE_ID>.<ro.product.board>.so
+ include $(CLEAR_VARS)
+ 
++VNCSERVER_PATH = $(LOCAL_PATH)/../../../../external/libvncserver/
++
++LOCAL_C_INCLUDES += $(VNCSERVER_PATH)/include \
++                    $(VNCSERVER_PATH)/lib \
++                    $(VNCSERVER_PATH)/libvncserver \
++                    $(VNCSERVER_PATH) \
++                    $(VNCSERVER_PATH)/common \
++                    $(VNCSERVER_PATH)/others \
++                    $(VNCSERVER_PATH)/others/suinput \
++                    $(VNCSERVER_PATH)/others/linux \
++                    $(VNCSERVER_PATH)/others/anbox
++
++LOCAL_EXPORT_C_INCLUDES += $(LOCAL_C_INCLUDES)
++
+ LOCAL_MODULE_RELATIVE_PATH := hw
+-LOCAL_SHARED_LIBRARIES := liblog libcutils
++LOCAL_SHARED_LIBRARIES := liblog libcutils libcrypto libssl
++LOCAL_STATIC_LIBRARIES := libvncserver libz libpng libjpeg_static 
+ 
+ LOCAL_SRC_FILES := 	\
+ 	gralloc.cpp 	\
+ 	framebuffer.cpp \
+-	mapper.cpp
++	mapper.cpp      \
++	vncserver.c
+ 
+ LOCAL_MODULE := gralloc.default
+ LOCAL_CFLAGS:= -DLOG_TAG=\"gralloc\" -Wno-missing-field-initializers
+diff --git a/hardware/libhardware/modules/gralloc/framebuffer.cpp b/hardware/libhardware/modules/gralloc/framebuffer.cpp
+index 8402867..9afdd2e 100644
+--- a/hardware/libhardware/modules/gralloc/framebuffer.cpp
++++ b/hardware/libhardware/modules/gralloc/framebuffer.cpp
+@@ -62,6 +62,13 @@ struct fb_context_t {
+     framebuffer_device_t  device;
+ };
+ 
++
++extern "C"{
++extern int start_vnc_server(void* data, int w, int h);
++extern void mark_vnc_rect();
++extern void stop_vnc_server();
++}
++
+ /*****************************************************************************/
+ 
+ static int fb_setSwapInterval(struct framebuffer_device_t* dev,
+@@ -134,6 +141,8 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
+         m->base.unlock(&m->base, m->framebuffer); 
+     }
+     
++    mark_vnc_rect();
++
+     return 0;
+ }
+ 
+@@ -435,7 +444,7 @@ int mapCloudFrameBufferLocked(struct private_module_t* module)
+     }
+     module->framebuffer->base = intptr_t(vaddr);
+     memset(vaddr, 0, fbSize);
+-    
++    start_vnc_server(vaddr, info.xres, info.yres);
+     return 0;
+ }
+ 
+@@ -457,6 +466,7 @@ static int fb_close(struct hw_device_t *dev)
+     if (ctx) {
+         free(ctx);
+     }
++    stop_vnc_server();
+     return 0;
+ }
+ 
+diff --git a/hardware/libhardware/modules/gralloc/vncserver.c b/hardware/libhardware/modules/gralloc/vncserver.c
+new file mode 100644
+index 0000000..3edc6d6
+--- /dev/null
++++ b/hardware/libhardware/modules/gralloc/vncserver.c
+@@ -0,0 +1,283 @@
++#include "common.h"
++#include <time.h>
++
++#include "gui.h"
++#include "input.h"
++
++#include "rfb/rfb.h"
++#include "rfb/keysym.h"
++#include "suinput.h"
++#include "anbox_input.h"
++
++#define CONCAT2(a,b) a##b
++#define CONCAT2E(a,b) CONCAT2(a,b)
++#define CONCAT3(a,b,c) a##b##c
++#define CONCAT3E(a,b,c) CONCAT3(a,b,c)
++
++char VNC_PASSWORD[256] = "";
++char VNC_PASSWD_FILE[256] = "";
++/* Android already has 5900 bound natively in some devices. */
++int VNC_PORT=5901;
++
++unsigned int *vncbuf;
++
++static rfbScreenInfoPtr vncscr;
++
++uint32_t idle = 0;
++uint32_t standby = 1;
++uint16_t rotation = 0;
++uint16_t scaling = 100;
++uint8_t display_rotate_180 = 0;
++
++//reverse connection
++char *rhost = NULL;
++int rport = 5500;
++
++char *repeaterHost = NULL;
++int repeaterPort = 5500;
++char repeaterID[250] = "1000";
++rfbBool RepeaterGone = FALSE;
++
++
++enum method_type {AUTO,FRAMEBUFFER,ADB,GRALLOC,FLINGER,VIRTUAL_DISPLAY};
++enum method_type method=AUTO;
++
++#define PIXEL_TO_VIRTUALPIXEL_FB(i,j) ((j+scrinfo.yoffset)*scrinfo.xres_virtual+i+scrinfo.xoffset)
++#define PIXEL_TO_VIRTUALPIXEL(i,j) ((j*screenformat.width)+i)
++
++inline int getCurrentRotation()
++{
++	return rotation;
++}
++
++void setIdle(int i)
++{
++	idle=i;
++}
++
++ClientGoneHookPtr clientGone(rfbClientPtr cl)
++{
++	sendMsgToGui("~DISCONNECTED|\n");
++	return 0;
++}
++
++rfbNewClientHookPtr clientHook(rfbClientPtr cl)
++{
++	if (scaling!=100)
++	{
++		//rfbScalingSetup(cl, vncscr->width*scaling/100.0, vncscr->height*scaling/100.0);
++		L("Scaling to w=%d	h=%d\n",(int)(vncscr->width*scaling/100.0), (int)(vncscr->height*scaling/100.0));
++		//rfbSendNewScaleSize(cl);
++	}
++
++	cl->clientGoneHook=(ClientGoneHookPtr)clientGone;
++
++	char *header="~CONNECTED|";
++	char *msg=malloc(sizeof(char)*((strlen(cl->host)) + strlen(header)+1));
++	msg[0]='\0';
++	strcat(msg,header);
++	strcat(msg,cl->host);
++	strcat(msg,"\n");
++	sendMsgToGui(msg);
++	free (msg);
++
++	return RFB_CLIENT_ACCEPT;
++}
++
++
++void CutText(char* str,int len, struct _rfbClientRec* cl)
++{
++	str[len]='\0';
++	char *header="~CLIP|\n";
++	char *msg=malloc(sizeof(char)*(strlen(str) + strlen(header)+1));
++	msg[0]='\0';
++	strcat(msg,header);
++	strcat(msg,str);
++	strcat(msg,"\n");
++	sendMsgToGui(msg);
++	free(msg);
++}
++
++void sendServerStarted(){
++	sendMsgToGui("~SERVERSTARTED|\n");
++}
++
++void sendServerStopped()
++{
++	sendMsgToGui("~SERVERSTOPPED|\n");
++}
++
++void initVncServer(void* data, int w, int h)
++{
++
++	vncbuf = data;
++
++	if (rotation==0 || rotation==180)
++		vncscr = rfbGetScreen(NULL, NULL, screenformat.width , screenformat.height, 0 /* not used */ , 4,	4);
++	else
++		vncscr = rfbGetScreen(NULL, NULL, screenformat.height, screenformat.width, 0 /* not used */ , 4,	4);
++
++
++	vncscr->desktopName = "Android";
++	vncscr->frameBuffer =(char *)vncbuf;
++	vncscr->port = VNC_PORT;
++	vncscr->kbdAddEvent = keyEvent;
++	vncscr->ptrAddEvent = ptrEvent;
++	vncscr->newClientHook = (rfbNewClientHookPtr)clientHook;
++	vncscr->setXCutText = CutText;
++
++    if (strcmp(VNC_PASSWD_FILE, "") != 0) {
++        L("Using encrypted password file\n");
++        vncscr->authPasswdData = VNC_PASSWD_FILE;
++    }
++    else if (strcmp(VNC_PASSWORD, "") != 0)
++	{
++        L("Using plain text password\n");
++        char **passwords = (char **)malloc(2 * sizeof(char **));
++		passwords[0] = VNC_PASSWORD;
++		passwords[1] = NULL;
++		vncscr->authPasswdData = passwords;
++		vncscr->passwordCheck = rfbCheckPasswordByList;
++	}
++
++	vncscr->httpDir = "webclients/";
++//	vncscr->httpEnableProxyConnect = TRUE;
++	vncscr->sslcertfile = "self.pem";
++
++	vncscr->serverFormat.redShift = screenformat.redShift;
++	vncscr->serverFormat.greenShift = screenformat.greenShift;
++	vncscr->serverFormat.blueShift = screenformat.blueShift;	
++    
++	vncscr->serverFormat.redMax = screenformat.redMax;//(( 1 << screenformat.redMax) -1);
++	vncscr->serverFormat.greenMax = screenformat.greenMax;//(( 1 << screenformat.greenMax) -1);
++	vncscr->serverFormat.blueMax = screenformat.blueMax;//(( 1 << screenformat.blueMax) -1);
++
++	vncscr->serverFormat.trueColour = TRUE;
++	vncscr->serverFormat.bitsPerPixel = screenformat.bitsPerPixel;
++
++	int n = 1;
++    // little endian if true
++    if(*(char *)&n == 1) 
++    {
++        L("Platrom is Big Endian\n");
++        vncscr->serverFormat.bigEndian = FALSE;
++    }
++    else
++    {
++        L("Platrom is Little Endian\n");
++        vncscr->serverFormat.bigEndian = TRUE;
++    }
++    
++
++	vncscr->alwaysShared = TRUE;
++	vncscr->handleEventsEagerly = TRUE;
++	vncscr->deferUpdateTime = 5;
++
++	rfbInitServer(vncscr);
++
++	//assign update_screen depending on bpp
++    {
++
++    }
++
++	/* Mark as dirty since we haven't sent any updates at all yet. */
++	rfbMarkRectAsModified(vncscr, 0, 0, vncscr->width, vncscr->height);
++}
++
++void rotate(int value)
++{
++
++	L("rotate()\n");
++
++	if (value == -1 ||
++		((value == 90 || value == 270) && (rotation == 0 || rotation == 180)) ||
++		((value == 0 || value == 180) && (rotation == 90 || rotation == 270))) {
++			int h = vncscr->height;
++			int w = vncscr->width;
++
++			vncscr->width = h;
++			vncscr->paddedWidthInBytes = h * screenformat.bitsPerPixel / CHAR_BIT;
++			vncscr->height = w;
++
++			rfbClientIteratorPtr iterator;
++			rfbClientPtr cl;
++			iterator = rfbGetClientIterator(vncscr);
++			while ((cl = rfbClientIteratorNext(iterator)) != NULL)
++			cl->newFBSizePending = 1;
++	}
++
++	if (value == -1) {
++		rotation += 90;
++		rotation %= 360;
++	} else {
++		rotation = value;
++	}
++
++	rfbMarkRectAsModified(vncscr, 0, 0, vncscr->width, vncscr->height);
++}
++
++void close_app()
++{
++	L("Cleaning up...\n");
++	
++	cleanupInput();
++	sendServerStopped();
++	unbindIPCserver();
++}
++
++#define GAP(start, end) ((end.tv_sec-start.tv_sec)*1000.0 + (end.tv_usec-start.tv_usec)/1000.0)
++
++#ifdef __cplusplus
++sadadXXXXXX
++#endif
++
++int start_vnc_server(void* data, int w, int h)
++{
++	long usec;
++
++    screenformat.width = w;
++    screenformat.height =h;
++    screenformat.bitsPerPixel = 32;
++    
++    screenformat.alphaShift = 24;
++    screenformat.redShift = 0;
++    screenformat.greenShift = 8;
++    screenformat.blueShift = 16;
++    
++    screenformat.alphaMax = 255;
++    screenformat.redMax = 255;
++    screenformat.greenMax = 255;
++    screenformat.blueMax = 255;
++    
++
++	L("Initializing virtual keyboard and touch device...\n");
++	initInput((int)screenformat.width, (int)screenformat.height);
++
++	L("Initializing VNC server:\n");
++	L("\twidth:\t%d\n", (int)screenformat.width);
++	L("\theight:\t%d\n", (int)screenformat.height);
++	L("\tbpp:\t%d\n", (int)screenformat.bitsPerPixel);
++	L("\tport:\t%d\n", (int)VNC_PORT);
++	L("\tColourmap_rgba=%d:%d:%d:%d\n\tlength=%d:%d:%d:%d\n", screenformat.redShift, screenformat.greenShift, screenformat.blueShift,screenformat.alphaShift, screenformat.redMax,screenformat.greenMax,screenformat.blueMax,screenformat.alphaMax);
++
++	initVncServer(data, w, h);
++
++	bindIPCserver();
++	sendServerStarted();
++
++	rfbClientPtr repeater = NULL;
++
++    rfbRunEventLoop(vncscr, 50, (rfbBool)1);
++
++    return 1;
++}
++
++void mark_vnc_rect()
++{ 
++	rfbMarkRectAsModified(vncscr, 0, 0, vncscr->width, vncscr->height);
++}
++
++void stop_vnc_server()
++{
++    close_app();
++}
+diff --git a/vendor/anbox/scripts/anbox-init.sh b/vendor/anbox/scripts/anbox-init.sh
+index 78edb6e..d6b736b 100644
+--- a/vendor/anbox/scripts/anbox-init.sh
++++ b/vendor/anbox/scripts/anbox-init.sh
+@@ -50,10 +50,12 @@ dns=$(grep nameserver /etc/resolv.conf |head -n 1 |sed 's/nameserver //g')
+ if [ "$ip" != "" ] ; then
+     echo -e "$i\t$ip" > /data/ip.txt
+     mkdir -p /data/misc/ethernet
+-    /ip_config $ip $dns > /data/ip_config.txt
++    ip_config $ip $dns > /data/ip_config.txt
+     break
+ fi
+ 
++
++
+ mount -t binfmt_misc none /proc/sys/fs/binfmt_misc
+ echo ':arm_exe:M::\\x7f\\x45\\x4c\\x46\\x01\\x01\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02\\x00\\x28::/system/lib/arm/houdini:P' > /proc/sys/fs/binfmt_misc/register
+ echo ':arm_dyn:M::\\x7f\\x45\\x4c\\x46\\x01\\x01\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x03\\x00\\x28::/system/lib/arm/houdini:P' > /proc/sys/fs/binfmt_misc/register
+-- 
+2.7.4
