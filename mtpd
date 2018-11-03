@@ -1,0 +1,430 @@
+From 695dfb0a641eb1aeffc7cb0271807fbb41e8b3a7 Mon Sep 17 00:00:00 2001
+From: gkl5433 <gkl5433@163.com>
+Date: Sat, 3 Nov 2018 16:41:45 +0800
+Subject: [PATCH] merge latest mtpd (tmp)
+
+---
+ external/mtpd/mtpd.c | 135 +++++++++++++++++++++++++++++++++++++-
+ external/mtpd/mtpd.h |   3 +
+ external/mtpd/pptp.c | 179 ++++++++++++++++++++++++++++++++++++++++++++++++++-
+ 3 files changed, 312 insertions(+), 5 deletions(-)
+ mode change 100644 => 100755 external/mtpd/mtpd.c
+ mode change 100644 => 100755 external/mtpd/mtpd.h
+ mode change 100644 => 100755 external/mtpd/pptp.c
+
+diff --git a/external/mtpd/mtpd.c b/external/mtpd/mtpd.c
+old mode 100644
+new mode 100755
+index c005567..66c81a6
+--- a/external/mtpd/mtpd.c
++++ b/external/mtpd/mtpd.c
+@@ -35,6 +35,11 @@
+ #endif
+ 
+ #include "mtpd.h"
++#define ARRAY_SIZE(a)           (sizeof(a) / sizeof(a[0]))
++/* Characters count in string with max value of unsigned type t */
++#define TYPE_STRLEN_U(t)        ((((sizeof(t) * CHAR_BIT) * 1233) >> 12) + 1)
++/* Length of string with max file descriptor value */
++#define FD_MAX_LEN              TYPE_STRLEN_U(int)
+ 
+ int the_socket = -1;
+ 
+@@ -317,9 +322,9 @@ void start_pppd(int pppox)
+ 
+     if (!pppd_pid) {
+         char *args[pppd_argc + 5];
+-        char number[12];
++        char number[FD_MAX_LEN + 1];
+ 
+-        sprintf(number, "%d", pppox);
++        snprintf(number, FD_MAX_LEN + 1, "%d", pppox);
+         args[0] = "pppd";
+         args[1] = "nodetach";
+         args[2] = "pppox";
+@@ -353,3 +358,129 @@ void start_pppd(int pppox)
+     log_print(INFO, "Pppd started (pid = %d)", pppd_pid);
+     close(pppox);
+ }
++
++
++
++/**
++ * Start pppd daemon with pppol2tp-android plugin.
++ *
++ * @param tunnel_fd Tunnel socket file descriptor
++ * @param session_fd Session socket file descriptor
++ * @param tunnel_id Tunnel ID; must be in host byte order
++ * @param session_id Session ID; must be in host byte order
++ */
++void start_pppd_ol2tp(int tunnel_fd, int session_fd, int tunnel_id,
++                      int session_id)
++{
++    if (pppd_pid) {
++        log_print(WARNING, "Pppd is already started (pid = %d)", pppd_pid);
++        goto ret;
++    }
++
++    log_print(INFO, "Starting pppd (tunnel_fd = %d, session_fd = %d)",
++              tunnel_fd, session_fd);
++
++    pppd_pid = fork();
++    if (pppd_pid < 0) {
++        log_print(FATAL, "Fork() %s", strerror(errno));
++        exit(SYSTEM_ERROR);
++    }
++
++    if (!pppd_pid) {
++        char tunnel_fd_str[FD_MAX_LEN + 1];
++        char session_fd_str[FD_MAX_LEN + 1];
++        char tunnel_id_str[FD_MAX_LEN + 1];
++        char session_id_str[FD_MAX_LEN + 1];
++
++        snprintf(tunnel_fd_str, FD_MAX_LEN + 1, "%d", tunnel_fd);
++        snprintf(session_fd_str, FD_MAX_LEN + 1, "%d", session_fd);
++        snprintf(tunnel_id_str, FD_MAX_LEN + 1, "%d", tunnel_id);
++        snprintf(session_id_str, FD_MAX_LEN + 1, "%d", session_id);
++
++        const char *l2tp_args[] = {
++            "pppd",
++            "nodetach",
++            "plugin",
++            "pppol2tp-android.so",
++            "session_fd",
++            session_fd_str,
++            "tunnel_fd",
++            tunnel_fd_str,
++            "session_id",
++            session_id_str,
++            "tunnel_id",
++            tunnel_id_str,
++        };
++        const size_t args_len = ARRAY_SIZE(l2tp_args) + pppd_argc + 1;
++        char *args[args_len];
++
++        /* Populate args[] from l2tp_args[] and pppd_argv[] */
++        memcpy(args, l2tp_args, sizeof(l2tp_args));
++        memcpy(args + ARRAY_SIZE(l2tp_args), pppd_argv,
++                sizeof(char *) * pppd_argc);
++        args[args_len - 1] = NULL;
++
++        execvp("pppd", args);
++        log_print(FATAL, "Exec() %s", strerror(errno));
++        exit(SYSTEM_ERROR); /* Pretending a fatal error in pppd. */
++    }
++
++    log_print(INFO, "Pppd started (pid = %d)", pppd_pid);
++
++ret:
++    close(session_fd);
++    close(tunnel_fd);
++}
++
++/**
++ * Start pppd daemon with pppopptp-android plugin.
++ *
++ * @param pptp_fd PPTP socket file descriptor
++ */
++void start_pppd_pptp(int pptp_fd)
++{
++    if (pppd_pid) {
++        log_print(WARNING, "Pppd is already started (pid = %d)", pppd_pid);
++        goto ret;
++    }
++
++    log_print(INFO, "Starting pppd (pptp_fd = %d)", pptp_fd);
++
++    pppd_pid = fork();
++    if (pppd_pid < 0) {
++        log_print(FATAL, "Fork() %s", strerror(errno));
++        exit(SYSTEM_ERROR);
++    }
++
++    if (!pppd_pid) {
++        char pptp_fd_str[FD_MAX_LEN + 1];
++
++        snprintf(pptp_fd_str, FD_MAX_LEN + 1, "%d", pptp_fd);
++
++        const char *pptp_args[] = {
++            "pppd",
++            "nodetach",
++            "plugin",
++            "pppopptp-android.so",
++            "pptp_socket",
++            pptp_fd_str,
++        };
++        const size_t args_len = ARRAY_SIZE(pptp_args) + pppd_argc + 1;
++        char *args[args_len];
++
++        /* Populate args[] from pptp_args[] and pppd_argv[] */
++        memcpy(args, pptp_args, sizeof(pptp_args));
++        memcpy(args + ARRAY_SIZE(pptp_args), pppd_argv,
++                sizeof(char *) * pppd_argc);
++        args[args_len - 1] = NULL;
++
++        execvp("pppd", args);
++        log_print(FATAL, "Exec() %s", strerror(errno));
++        exit(SYSTEM_ERROR); /* Pretending a fatal error in pppd. */
++    }
++
++    log_print(INFO, "Pppd started (pid = %d)", pppd_pid);
++
++ret:
++    close(pptp_fd);
++}
+diff --git a/external/mtpd/mtpd.h b/external/mtpd/mtpd.h
+old mode 100644
+new mode 100755
+index 8e7799b..290a583
+--- a/external/mtpd/mtpd.h
++++ b/external/mtpd/mtpd.h
+@@ -70,6 +70,9 @@ enum log_level {
+ void log_print(int level, char *format, ...);
+ void create_socket(int family, int type, char *server, char *port);
+ void start_pppd(int pppox);
++void start_pppd_ol2tp(int tunnel_fd, int session_fd, int tunnel_id,
++                      int session_id);
++void start_pppd_pptp(int pptp_fd);
+ 
+ /* Each protocol must implement everything defined in this structure. Note that
+  * timeout intervals are in milliseconds, where zero means forever. To indicate
+diff --git a/external/mtpd/pptp.c b/external/mtpd/pptp.c
+old mode 100644
+new mode 100755
+index c748d1a..a272671
+--- a/external/mtpd/pptp.c
++++ b/external/mtpd/pptp.c
+@@ -19,15 +19,19 @@
+  * Data packets are handled by PPPoPNS driver which can be found in Android
+  * kernel tree. */
+ 
++#include <stdbool.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <errno.h>
+ #include <sys/types.h>
+ #include <sys/socket.h>
++#include <netdb.h>
++#include <unistd.h>
+ #include <arpa/inet.h>
+ #include <linux/netdevice.h>
+ #include <linux/if_pppox.h>
++#include <linux/types.h>
+ 
+ #include "mtpd.h"
+ 
+@@ -75,6 +79,7 @@ static uint8_t lengths[] = {
+ static uint16_t local;
+ static uint16_t remote;
+ static uint16_t state;
++static const char *remote_name;    /* server host name or IP address */
+ 
+ #define MAX_PACKET_LENGTH       220
+ 
+@@ -215,6 +220,8 @@ static int recv_packet()
+ 
+ static int pptp_connect(char **arguments)
+ {
++    remote_name = arguments[0];
++
+     create_socket(AF_UNSPEC, SOCK_STREAM, arguments[0], arguments[1]);
+ 
+     log_print(DEBUG, "Sending SCCRQ");
+@@ -229,10 +236,40 @@ static int pptp_connect(char **arguments)
+     return 0;
+ }
+ 
+-static int create_pppox()
++/**
++ * Check if upstream kernel implementation is enabled.
++ *
++ * @return true if upstream PPTP is enabled in kernel and false otherwise
++ */
++static bool check_pptp(void)
++{
++    int fd = socket(AF_PPPOX, SOCK_DGRAM, PX_PROTO_PPTP);
++
++    if (fd < 0) {
++        return false;
++    } else {
++        close(fd);
++        return true;
++    }
++}
++
++/**
++ * Create OPNS session.
++ *
++ * @deprecated It will be removed soon in favor of upstream PPTP.
++ *
++ * @return PPPoX socket file descriptor
++ */
++static int create_pppox_opns(void)
+ {
+-    int pppox = socket(AF_PPPOX, SOCK_DGRAM, PX_PROTO_OPNS);
++    int pppox;
++
++    log_print(WARNING, "Using deprecated OPNS protocol. "
++                       "Its support will be removed soon. "
++                       "Please enable PPTP support in your kernel");
++
+     log_print(INFO, "Creating PPPoX socket");
++    pppox = socket(AF_PPPOX, SOCK_DGRAM, PX_PROTO_OPNS);
+ 
+     if (pppox == -1) {
+         log_print(FATAL, "Socket() %s", strerror(errno));
+@@ -253,6 +290,137 @@ static int create_pppox()
+     return pppox;
+ }
+ 
++/**
++ * Get IP address by host name.
++ *
++ * @param name Host name to get IP address for
++ *
++ * @return IP address for given host name
++ */
++static struct in_addr get_addr_by_name(const char *name)
++{
++    struct addrinfo hints;
++    struct addrinfo *res, *rp;
++    struct in_addr addr;
++    int err;
++
++    memset(&hints, 0, sizeof(struct addrinfo));
++    hints.ai_family = AF_INET;       /* allow only IPv4 */
++    hints.ai_socktype = SOCK_DGRAM;  /* UDP */
++    hints.ai_protocol = 0;           /* any protocol */
++
++    err = getaddrinfo(name, NULL, &hints, &res);
++    if (err) {
++        log_print(FATAL, "%s: getaddrinfo: %s", __func__, gai_strerror(err));
++        exit(SYSTEM_ERROR);
++    }
++
++    for (rp = res; rp != NULL; rp = rp->ai_next) {
++        /* For now we only support IPv4 */
++        if (rp->ai_family == AF_INET) {
++            addr = ((struct sockaddr_in *)rp->ai_addr)->sin_addr;
++            break;
++        }
++    }
++
++    if (rp == NULL) {
++        log_print(FATAL, "%s: No IPv4 addresses found", __func__);
++        freeaddrinfo(res);
++        exit(SYSTEM_ERROR);
++    }
++
++    freeaddrinfo(res);
++
++    return addr;
++}
++
++/**
++ * Get local IP address.
++ *
++ * Make a socket connection with remote server and then call getsockname() on
++ * the connected socket. This will return the local IP address.
++ *
++ * @param remote_addr Server IP address
++ *
++ * @return Local IP address
++ */
++static struct in_addr get_local_addr(struct in_addr remote_addr)
++{
++    int sock;
++    struct sockaddr_in addr;
++    socklen_t addr_len;
++
++    addr_len = sizeof(struct sockaddr_in);
++    addr.sin_addr = remote_addr;
++    addr.sin_family = AF_INET;
++    addr.sin_port = htons(0);
++
++    sock = socket(AF_INET, SOCK_DGRAM, 0);
++    if (sock < 0) {
++        log_print(FATAL, "%s: Socket() %s", __func__, strerror(errno));
++        exit(SYSTEM_ERROR);
++    }
++
++    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr))) {
++        close(sock);
++        log_print(FATAL, "%s: Connect() %s", __func__, strerror(errno));
++        exit(SYSTEM_ERROR);
++    }
++
++    getsockname(sock, (struct sockaddr*)&addr, &addr_len);
++    close(sock);
++
++    return addr.sin_addr;
++}
++
++/**
++ * Create PPTP session.
++ *
++ * @return PPTP socket file descriptor
++ */
++static int create_pppox_pptp(void)
++{
++    int pptp_fd;
++    struct sockaddr_pppox src, dst;
++    struct in_addr remote_addr; /* server IP address */
++    struct in_addr local_addr;  /* client IP address */
++
++    remote_addr = get_addr_by_name(remote_name);
++    local_addr = get_local_addr(remote_addr);
++
++    src.sa_family = AF_PPPOX;
++    src.sa_protocol = PX_PROTO_PPTP;
++    src.sa_addr.pptp.call_id = ntohs(local);
++    src.sa_addr.pptp.sin_addr = local_addr;
++
++    dst.sa_family = AF_PPPOX;
++    dst.sa_protocol = PX_PROTO_PPTP;
++    dst.sa_addr.pptp.call_id = ntohs(remote);
++    dst.sa_addr.pptp.sin_addr = remote_addr;
++
++    pptp_fd = socket(AF_PPPOX, SOCK_STREAM, PX_PROTO_PPTP);
++    if (pptp_fd < 0) {
++        log_print(FATAL, "Failed to create PPTP socket (%s)", strerror(errno));
++        exit(SYSTEM_ERROR);
++    }
++
++    if (bind(pptp_fd, (struct sockaddr*)&src, sizeof(src))) {
++        log_print(FATAL, "Failed to bind PPTP socket (%s)", strerror(errno));
++        close(pptp_fd);
++        exit(SYSTEM_ERROR);
++    }
++
++    if (connect(pptp_fd, (struct sockaddr*)&dst, sizeof(dst))) {
++        log_print(FATAL, "Failed to connect PPTP socket (%s)", strerror(errno));
++        close(pptp_fd);
++        exit(SYSTEM_ERROR);
++    }
++
++    return pptp_fd;
++}
++
++
++
+ static int pptp_process()
+ {
+     int result = recv_packet();
+@@ -312,7 +480,12 @@ static int pptp_process()
+                     log_print(DEBUG, "Received OCRQ (remote = %d)", remote);
+                     log_print(INFO, "Session established");
+                     state = OCRP;
+-                    start_pppd(create_pppox());
++
++                    if (check_pptp())
++                        start_pppd_pptp(create_pppox_pptp());
++                    else
++                        start_pppd(create_pppox_opns());
++
+                     return 0;
+                 }
+                 log_print(DEBUG, "Received OCRP (result = %d)",
+-- 
+2.7.4
