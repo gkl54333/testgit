@@ -1,0 +1,46 @@
+[offical]
+sudo snap stop anbox.container-manager
+sudo ANBOX_LOG_LEVEL=debug snap run anbox.container-manager &
+ANBOX_LOG_LEVEL=debug anbox session-manager
+
+
+[custom]
+1. sudo ANBOX_LOG_LEVEL=debug anbox container-manager --daemon --privileged --data-path=/var/lib/anbox --android-image=/home/yinpeng/nteam/anbox-work/vendor/anbox/android-houdini.img
+2. anbox session-manager --single-window --window-size=480,800
+3. anbox launch --package=org.anbox.appmgr --component=org.anbox.appmgr.AppViewActivity
+
+
+
+
+
+
+[cloud_android]
+1.	docker
+https://docs.docker.com/install/linux/docker-ce/ubuntu/#set-up-the-repository
+
+2.	ashmem,binder
+sudo add-apt-repository ppa:morphis/anbox-support
+sudo apt update
+sudo apt install anbox-modules-dkms
+
+sudo modprobe ashmem_linux
+sudo modprobe binder_linux num_devices=10
+
+3.	docker image
+docker load  -i android_latest.tar
+
+4.	run docker image
+./run 0
+
+ps: make docker image
+sudo tar -C squashfs-root/ -c . | docker import - android:latest
+
+sudo mksquashfs squashfs-root/ android-houdini.img -noappend -always-use-fragments
+
+am start -a android.intent.action.VIEW -d  http://www.google.cn/
+am start -n com.wandoujia.phoenix2/com.pp.assistant.activity.PPMainActivity
+am start -n com.sup.android.superb/.SplashActivity
+am start -n com.android.settings/com.android.settings.Settings
+
+
+adb shell input tap 240 750
