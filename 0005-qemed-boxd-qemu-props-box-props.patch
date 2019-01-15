@@ -1,0 +1,107 @@
+From 3b3dcb067fd49c35df5c28eec212b3d0301fffd5 Mon Sep 17 00:00:00 2001
+From: gkl5433 <gkl5433@gkl5433.com>
+Date: Thu, 10 Jan 2019 11:24:25 +0800
+Subject: [PATCH 5/6] qemed->boxd qemu-props->box-props
+
+---
+ hardware/libhardware/include/hardware/qemud.h | 2 +-
+ vendor/anbox/android/init.goldfish.rc         | 6 +++---
+ vendor/anbox/android/qemu-props/Android.mk    | 2 +-
+ vendor/anbox/android/qemud/Android.mk         | 2 +-
+ vendor/anbox/android/qemud/qemud.c            | 2 +-
+ vendor/anbox/products/anbox.mk                | 4 ++--
+ 6 files changed, 9 insertions(+), 9 deletions(-)
+ mode change 100644 => 100755 hardware/libhardware/include/hardware/qemud.h
+
+diff --git a/hardware/libhardware/include/hardware/qemud.h b/hardware/libhardware/include/hardware/qemud.h
+old mode 100644
+new mode 100755
+index 5c39f9c..5f755e0
+--- a/hardware/libhardware/include/hardware/qemud.h
++++ b/hardware/libhardware/include/hardware/qemud.h
+@@ -74,7 +74,7 @@ qemud_channel_open(const char*  name)
+     if (fd < 0) {
+         D("QEMUD pipe is not available for %s: %s", name, strerror(errno));
+         /* If pipe is not available, connect to qemud control socket */
+-        fd = socket_local_client( "qemud",
++        fd = socket_local_client( "boxd",
+                                   ANDROID_SOCKET_NAMESPACE_RESERVED,
+                                   SOCK_STREAM );
+         if (fd < 0) {
+diff --git a/vendor/anbox/android/init.goldfish.rc b/vendor/anbox/android/init.goldfish.rc
+index 6db19e4..6d98039 100644
+--- a/vendor/anbox/android/init.goldfish.rc
++++ b/vendor/anbox/android/init.goldfish.rc
+@@ -75,14 +75,14 @@ service goldfish-setup /system/etc/init.goldfish.sh
+ # might read them (e.g. surface flinger), so define it in
+ # class 'core'
+ #
+-service qemu-props /system/bin/qemu-props
++service qemu-props /system/bin/box-props
+     class core
+     user root
+     group root
+     oneshot
+ 
+-service qemud /system/bin/qemud
+-    socket qemud    stream 666
++service qemud /system/bin/boxd
++    socket boxd    stream 666
+     oneshot
+ 
+ # -Q is a special logcat option that forces the
+diff --git a/vendor/anbox/android/qemu-props/Android.mk b/vendor/anbox/android/qemu-props/Android.mk
+index 78ab1d5..3480a94 100644
+--- a/vendor/anbox/android/qemu-props/Android.mk
++++ b/vendor/anbox/android/qemu-props/Android.mk
+@@ -22,7 +22,7 @@ LOCAL_PATH := $(call my-dir)
+ # to setup various system properties sent by the emulator program.
+ #
+ include $(CLEAR_VARS)
+-LOCAL_MODULE    := qemu-props
++LOCAL_MODULE    := box-props
+ LOCAL_SRC_FILES := qemu-props.c
+ LOCAL_SHARED_LIBRARIES := libcutils liblog
+ include $(BUILD_EXECUTABLE)
+diff --git a/vendor/anbox/android/qemud/Android.mk b/vendor/anbox/android/qemud/Android.mk
+index 30ee5eb..2e161a8 100644
+--- a/vendor/anbox/android/qemud/Android.mk
++++ b/vendor/anbox/android/qemud/Android.mk
+@@ -15,6 +15,6 @@ LOCAL_SRC_FILES:= \
+ LOCAL_SHARED_LIBRARIES := \
+ 	libcutils liblog
+ 
+-LOCAL_MODULE:= qemud
++LOCAL_MODULE:= boxd
+ 
+ include $(BUILD_EXECUTABLE)
+diff --git a/vendor/anbox/android/qemud/qemud.c b/vendor/anbox/android/qemud/qemud.c
+index a9185ba..6c1c1e9 100644
+--- a/vendor/anbox/android/qemud/qemud.c
++++ b/vendor/anbox/android/qemud/qemud.c
+@@ -1674,7 +1674,7 @@ int  main( void )
+ {
+     Multiplexer*  m = _multiplexer;
+ 
+-    multiplexer_init(m, "/dev/qemud");
++    multiplexer_init(m, "/dev/boxd");
+ 
+     D( "entering main loop");
+     looper_loop( m->looper );
+diff --git a/vendor/anbox/products/anbox.mk b/vendor/anbox/products/anbox.mk
+index f6b9f22..6ae367d 100644
+--- a/vendor/anbox/products/anbox.mk
++++ b/vendor/anbox/products/anbox.mk
+@@ -26,8 +26,8 @@ PRODUCT_PACKAGES += \
+ 	libOpenglSystemCommon \
+ 	libGLESv2_emulation \
+ 	libGLESv1_enc \
+-	qemu-props \
+-	qemud \
++	box-props \
++	boxd \
+ 	camera.goldfish \
+ 	camera.goldfish.jpeg \
+ 	lights.goldfish \
+-- 
+2.7.4
