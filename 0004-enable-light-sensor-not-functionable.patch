@@ -1,0 +1,27 @@
+From 880e0248b6b8bdd2d6b45e72622b671b5beafcfa Mon Sep 17 00:00:00 2001
+From: gkl5433 <gkl5433@gkl5433.com>
+Date: Wed, 9 Jan 2019 16:31:11 +0800
+Subject: [PATCH 4/6] enable light sensor(not functionable)
+
+---
+ vendor/anbox/src/anbox/qemu/sensors_message_processor.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+ mode change 100644 => 100755 vendor/anbox/src/anbox/qemu/sensors_message_processor.cpp
+
+diff --git a/vendor/anbox/src/anbox/qemu/sensors_message_processor.cpp b/vendor/anbox/src/anbox/qemu/sensors_message_processor.cpp
+old mode 100644
+new mode 100755
+index cb25b35..f3b66f7
+--- a/vendor/anbox/src/anbox/qemu/sensors_message_processor.cpp
++++ b/vendor/anbox/src/anbox/qemu/sensors_message_processor.cpp
+@@ -32,7 +32,7 @@ void SensorsMessageProcessor::handle_command(const std::string &command) {
+ 
+ void SensorsMessageProcessor::list_sensors() {
+   // We don't support sensors yet so we mark all as disabled
+-  int mask = 0;
++  int mask = 0x20;   //enable light sensor by valve from sensors_qemu.c
+   char buf[12];
+   snprintf(buf, sizeof(buf), "%d", mask);
+   send_header(strlen(buf));
+-- 
+2.7.4
