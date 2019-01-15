@@ -1,0 +1,282 @@
+From a64cf816b95d4c14856d6c1621dd171f5b43000e Mon Sep 17 00:00:00 2001
+From: gkl5433 <gkl5433@gkl5433.com>
+Date: Mon, 7 Jan 2019 10:42:35 +0800
+Subject: [PATCH 1/6] 1. add install-devinfo.sh install-houdini.sh 2. modify
+ vendor/anbox/scripts/anbox-init.sh (anbox_pipe) 3.
+ hardware/libhardware/include/hardware/qemu_pipe.h (qemu_pipe->anbox_pipe)
+
+---
+ hardware/libhardware/include/hardware/qemu_pipe.h |   4 +-
+ vendor/anbox/android/ueventd.goldfish.rc          |   1 +
+ vendor/anbox/scripts/anbox-init.sh                |   7 +-
+ vendor/anbox/scripts/install-devinfo.sh           |  53 +++++++++
+ vendor/anbox/scripts/install-houdini.sh           | 134 ++++++++++++++++++++++
+ 5 files changed, 196 insertions(+), 3 deletions(-)
+ mode change 100644 => 100755 hardware/libhardware/include/hardware/qemu_pipe.h
+ mode change 100644 => 100755 vendor/anbox/android/ueventd.goldfish.rc
+ create mode 100755 vendor/anbox/scripts/install-devinfo.sh
+ create mode 100755 vendor/anbox/scripts/install-houdini.sh
+
+diff --git a/hardware/libhardware/include/hardware/qemu_pipe.h b/hardware/libhardware/include/hardware/qemu_pipe.h
+old mode 100644
+new mode 100755
+index 8792180..f90963b
+--- a/hardware/libhardware/include/hardware/qemu_pipe.h
++++ b/hardware/libhardware/include/hardware/qemu_pipe.h
+@@ -77,7 +77,7 @@ qemu_pipe_open(const char*  pipeName)
+     struct sockaddr_un addr;
+     memset(&addr, 0, sizeof(addr));
+     addr.sun_family = AF_UNIX;
+-    strncpy(addr.sun_path, "/dev/qemu_pipe", sizeof(addr.sun_path));
++    strncpy(addr.sun_path, "/dev/anbox_pipe", sizeof(addr.sun_path));
+ 
+     if (connect(fd, (struct sockaddr*) &addr, sizeof(addr)) < 0) {
+ #if !defined(QEMU_PIPE_FROM_ADB)
+@@ -93,7 +93,7 @@ qemu_pipe_open(const char*  pipeName)
+     if (fd < 0 && errno == ENOENT)
+         fd = open("/dev/goldfish_pipe", O_RDWR);
+     if (fd < 0) {
+-        D("%s: Could not open /dev/qemu_pipe: %s", __FUNCTION__, strerror(errno));
++        D("%s: Could not open /dev/anbox_pipe: %s", __FUNCTION__, strerror(errno));
+         //errno = ENOSYS;
+         return -1;
+     }
+diff --git a/vendor/anbox/android/ueventd.goldfish.rc b/vendor/anbox/android/ueventd.goldfish.rc
+old mode 100644
+new mode 100755
+index 2c3ac4e..fa6d204
+--- a/vendor/anbox/android/ueventd.goldfish.rc
++++ b/vendor/anbox/android/ueventd.goldfish.rc
+@@ -1,6 +1,7 @@
+ # These settings are specific to running under the Android emulator
+ /dev/qemu_trace           0666   system     system
+ /dev/qemu_pipe            0666   system     system
++/dev/anbox_pipe            0666   system     system
+ /dev/goldfish_pipe        0666   system     system
+ /dev/ttyS*                0666   system     system
+ /proc                     0666   system     system
+diff --git a/vendor/anbox/scripts/anbox-init.sh b/vendor/anbox/scripts/anbox-init.sh
+index 1c0d0bc..1cf3e90 100644
+--- a/vendor/anbox/scripts/anbox-init.sh
++++ b/vendor/anbox/scripts/anbox-init.sh
+@@ -18,7 +18,7 @@ set -x
+ function prepare_filesystem() {
+ 	# These dev files need to be adjusted everytime as they are
+ 	# bind mounted into the temporary rootfs
+-	for f in qemu_pipe qemu_trace goldfish_pipe input/* ; do
++	for f in anbox_pipe qemu_pipe qemu_trace goldfish_pipe input/* ; do
+ 		if [ ! -e "/dev/$f" ] ; then
+ 			continue
+ 		fi
+@@ -31,5 +31,10 @@ prepare_filesystem &
+ echo "Waiting for filesystem being prepared ..."
+ wait $!
+ 
++# before the init
++mount -t binfmt_misc none /proc/sys/fs/binfmt_misc
++echo ':arm_exe:M::\\x7f\\x45\\x4c\\x46\\x01\\x01\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02\\x00\\x28::/system/lib/arm/houdini:P' > /proc/sys/fs/binfmt_misc/register
++echo ':arm_dyn:M::\\x7f\\x45\\x4c\\x46\\x01\\x01\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x03\\x00\\x28::/system/lib/arm/houdini:P' > /proc/sys/fs/binfmt_misc/register
++
+ echo "Starting real init now ..."
+ exec /init
+diff --git a/vendor/anbox/scripts/install-devinfo.sh b/vendor/anbox/scripts/install-devinfo.sh
+new file mode 100755
+index 0000000..ce7efaa
+--- /dev/null
++++ b/vendor/anbox/scripts/install-devinfo.sh
+@@ -0,0 +1,53 @@
++#!/bin/bash
++
++# die when an error occurs
++set -e
++
++
++
++
++# check if script was started with BASH
++if [ ! "$(ps -p $$ -oargs= | awk '{print $1}' | grep -E 'bash$')" ]; then
++   echo "Please use BASH to start the script!"
++	 exit 1
++fi
++
++# check if user is root
++if [ "$(whoami)" != "root" ]; then
++	echo "Sorry, you are not root. Please run with sudo $0"
++	exit 1
++fi
++
++# use sudo if installed
++if [ ! "$(which sudo)" ]; then
++	SUDO=""
++else
++	SUDO=$(which sudo)
++fi
++
++
++
++
++$SUDO sed -i "/^ro.build.host/ s/[^=]*$/default/" "./squashfs-root/system/build.prop"
++$SUDO sed -i "/^ro.build.user/ s/[^=]*$/default/" "./squashfs-root/system/build.prop"
++$SUDO sed -i "/^ro.build.flavor/ s/[^=]*$/default/" "./squashfs-root/system/build.prop"
++$SUDO sed -i "/^ro.build.display.id/ s/[^=]*$/JRO03L/" "./squashfs-root/system/build.prop"
++$SUDO sed -i "/^ro.build.version.incremental/ s/[^=]*$/20180925.162010/" "./squashfs-root/system/build.prop"
++$SUDO sed -i "/^ro.build.description/ s/[^=]*$/aries-user 4.1.1 JRO03L 4.7.25 release-keys/" "./squashfs-root/system/build.prop"
++$SUDO sed -i "/^ro.build.fingerprint/ s/[^=]*$/Xiaomi\/aries\/aries:4.1.1\/JRO03L\/4.7.25:user\/release-keys/" "./squashfs-root/system/build.prop"
++$SUDO sed -i "/^ro.build.characteristics/ s/[^=]*$/nosdcard/" "./squashfs-root/system/build.prop"
++
++$SUDO sed -i "/^ro.product.model/ s/[^=]*$/MI 2/" "./squashfs-root/system/build.prop"
++$SUDO sed -i "/^ro.product.brand/ s/[^=]*$/Xiaomi/" "./squashfs-root/system/build.prop"
++$SUDO sed -i "/^ro.product.name/ s/[^=]*$/aries/" "./squashfs-root/system/build.prop"
++$SUDO sed -i "/^ro.product.device/ s/[^=]*$/aries/" "./squashfs-root/system/build.prop"
++$SUDO sed -i "/^ro.product.board/ s/[^=]*$/MSM8960/" "./squashfs-root/system/build.prop"
++
++
++
++
++
++
++
++
++
+diff --git a/vendor/anbox/scripts/install-houdini.sh b/vendor/anbox/scripts/install-houdini.sh
+new file mode 100755
+index 0000000..b4b2513
+--- /dev/null
++++ b/vendor/anbox/scripts/install-houdini.sh
+@@ -0,0 +1,134 @@
++#!/bin/bash
++
++# die when an error occurs
++set -e
++
++
++
++HOUDINI_URL="http://dl.android-x86.org/houdini/7_y/houdini.sfs"
++HOUDINI_SO="https://github.com/Rprop/libhoudini/raw/master/4.0.8.45720/system/lib/libhoudini.so"
++
++
++####################################### blank
++
++
++
++# check if script was started with BASH
++if [ ! "$(ps -p $$ -oargs= | awk '{print $1}' | grep -E 'bash$')" ]; then
++   echo "Please use BASH to start the script!"
++	 exit 1
++fi
++
++# check if user is root
++if [ "$(whoami)" != "root" ]; then
++	echo "Sorry, you are not root. Please run with sudo $0"
++	exit 1
++fi
++
++# check if lzip is installed
++if [ ! "$(which lzip)" ]; then
++	echo -e "lzip is not installed. Please install lzip.\nExample: sudo apt install lzip"
++	exit 1
++fi
++
++# check if squashfs-tools are installed
++if [ ! "$(which mksquashfs)" ] || [ ! "$(which unsquashfs)" ]; then
++	echo -e "squashfs-tools is not installed. Please install squashfs-tools.\nExample: sudo apt install squashfs-tools"
++	exit 1
++else
++	MKSQUASHFS=$(which mksquashfs)
++	UNSQUASHFS=$(which unsquashfs)
++fi
++
++# check if wget is installed
++if [ ! "$(which wget)" ]; then
++	echo -e "wget is not installed. Please install wget.\nExample: sudo apt install wget"
++	exit 1
++else
++	WGET=$(which wget)
++fi
++
++# check if unzip is installed
++if [ ! "$(which unzip)" ]; then
++	echo -e "unzip is not installed. Please install unzip.\nExample: sudo apt install unzip"
++	exit 1
++else
++	UNZIP=$(which unzip)
++fi
++
++# check if tar is installed
++if [ ! "$(which tar)" ]; then
++	echo -e "tar is not installed. Please install tar.\nExample: sudo apt install tar"
++	exit 1
++else
++	TAR=$(which tar)
++fi
++
++# use sudo if installed
++if [ ! "$(which sudo)" ]; then
++	SUDO=""
++else
++	SUDO=$(which sudo)
++fi
++
++if [ ! -f "android.img" ]; then
++	echo -e "make android.img first!"
++	exit 1
++fi
++
++if [ -d "squashfs-root" ]; then
++	$SUDO rm -rf squashfs-root
++fi
++
++$SUDO $UNSQUASHFS android.img
++
++
++
++#load houdini and spread it
++if [ ! -f ./houdini.sfs ]; then
++  $WGET -q --show-progress $HOUDINI_URL
++fi
++LIBDIR="./squashfs-root/system/lib"
++$SUDO $UNSQUASHFS -d $LIBDIR/arm ./houdini.sfs
++$SUDO cp -r ./squashfs-root/system/lib/arm/libhoudini.so "$LIBDIR/"
++
++# set processors
++ARM_TYPE=",armeabi-v7a,armeabi"
++$SUDO sed -i "/^ro.product.cpu.abilist=x86_64,x86/ s/$/${ARM_TYPE}/" "./squashfs-root/system/build.prop"
++$SUDO sed -i "/^ro.product.cpu.abilist32=x86/ s/$/${ARM_TYPE}/" "./squashfs-root/system/build.prop"
++$SUDO sed -i "/^ro.product.cpu.abilist32=x86/ s/$/${ARM_TYPE}/" "./squashfs-root/system/build.prop"
++
++$SUDO echo "persist.sys.nativebridge=1" >> "./squashfs-root/system/build.prop"
++$SUDO echo "ro.dalvik.vm.isa.arm=x86" >> "./squashfs-root/system/build.prop"
++
++$SUDO sed -i "/^ro.dalvik.vm.native.bridge=0/ s/0/libhoudini.so/" "./squashfs-root/default.prop"
++
++# add features
++C=$(cat <<-END
++  <feature name="android.hardware.touchscreen" />\n
++  <feature name="android.hardware.audio.output" />\n
++  <feature name="android.hardware.camera" />\n
++  <feature name="android.hardware.camera.any" />\n
++  <feature name="android.hardware.location" />\n
++  <feature name="android.hardware.location.gps" />\n
++  <feature name="android.hardware.location.network" />\n
++  <feature name="android.hardware.microphone" />\n
++  <feature name="android.hardware.screen.portrait" />\n
++  <feature name="android.hardware.screen.landscape" />\n
++  <feature name="android.hardware.wifi" />\n
++  <feature name="android.hardware.bluetooth" />"
++END
++)
++
++C=$(echo $C | sed 's/\//\\\//g')
++C=$(echo $C | sed 's/\"/\\\"/g')
++$SUDO sed -i "/<\/permissions>/ s/.*/${C}\n&/" "./squashfs-root/system/etc/permissions/anbox.xml"
++# make wifi and bt available
++$SUDO sed -i "/<unavailable-feature name=\"android.hardware.wifi\" \/>/d" "./squashfs-root/system/etc/permissions/anbox.xml"
++$SUDO sed -i "/<unavailable-feature name=\"android.hardware.bluetooth\" \/>/d" "./squashfs-root/system/etc/permissions/anbox.xml"
++
++
++
++
++
++
+-- 
+2.7.4
