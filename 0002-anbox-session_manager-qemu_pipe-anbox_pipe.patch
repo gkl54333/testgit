@@ -1,0 +1,46 @@
+From 887175792d50162ad6f042b0f05df550aa072bf5 Mon Sep 17 00:00:00 2001
+From: gkl5433 <gkl5433@gkl5433.com>
+Date: Mon, 7 Jan 2019 11:33:01 +0800
+Subject: [PATCH 2/6] anbox session_manager: qemu_pipe->anbox_pipe
+
+---
+ vendor/anbox/scripts/install-houdini.sh         | 1 +
+ vendor/anbox/src/anbox/cmds/session_manager.cpp | 4 ++--
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/vendor/anbox/scripts/install-houdini.sh b/vendor/anbox/scripts/install-houdini.sh
+index b4b2513..d3e1b45 100755
+--- a/vendor/anbox/scripts/install-houdini.sh
++++ b/vendor/anbox/scripts/install-houdini.sh
+@@ -100,6 +100,7 @@ $SUDO sed -i "/^ro.product.cpu.abilist32=x86/ s/$/${ARM_TYPE}/" "./squashfs-root
+ 
+ $SUDO echo "persist.sys.nativebridge=1" >> "./squashfs-root/system/build.prop"
+ $SUDO echo "ro.dalvik.vm.isa.arm=x86" >> "./squashfs-root/system/build.prop"
++#$SUDO echo "ro.opengles.version=131072" >> "./squashfs-root/system/build.prop"
+ 
+ $SUDO sed -i "/^ro.dalvik.vm.native.bridge=0/ s/0/libhoudini.so/" "./squashfs-root/default.prop"
+ 
+diff --git a/vendor/anbox/src/anbox/cmds/session_manager.cpp b/vendor/anbox/src/anbox/cmds/session_manager.cpp
+index 65ee603..c1d8667 100644
+--- a/vendor/anbox/src/anbox/cmds/session_manager.cpp
++++ b/vendor/anbox/src/anbox/cmds/session_manager.cpp
+@@ -204,7 +204,7 @@ anbox::cmds::SessionManager::SessionManager()
+     // and host for things like the GLES emulation/translation, the RIL or ADB.
+     auto qemu_pipe_connector =
+         std::make_shared<network::PublishedSocketConnector>(
+-            utils::string_format("%s/qemu_pipe", socket_path), rt,
++            utils::string_format("%s/anbox_pipe", socket_path), rt,
+             std::make_shared<qemu::PipeConnectionCreator>(gl_server->renderer(), rt));
+ 
+     boost::asio::deadline_timer appmgr_start_timer(rt->service());
+@@ -241,7 +241,7 @@ anbox::cmds::SessionManager::SessionManager()
+     container::Configuration container_configuration;
+     if (!standalone_) {
+       container_configuration.bind_mounts = {
+-        {qemu_pipe_connector->socket_file(), "/dev/qemu_pipe"},
++        {qemu_pipe_connector->socket_file(), "/dev/anbox_pipe"},
+         {bridge_connector->socket_file(), "/dev/anbox_bridge"},
+         {audio_server->socket_file(), "/dev/anbox_audio"},
+         {SystemConfiguration::instance().input_device_dir(), "/dev/input"},
+-- 
+2.7.4
