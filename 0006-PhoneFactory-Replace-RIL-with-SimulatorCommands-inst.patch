@@ -1,0 +1,131 @@
+From 96ae2f1fdd3181448dcb296d4bd5ebc10f3ca6ab Mon Sep 17 00:00:00 2001
+From: gkl5433 <gkl5433@gkl5433.com>
+Date: Tue, 15 Jan 2019 21:08:34 +0800
+Subject: [PATCH 6/6] PhoneFactory: Replace RIL with SimulatorCommands instance
+
+---
+ build/tools/buildinfo.sh                            |  2 ++
+ .../android/internal/telephony/PhoneFactory.java    | 21 +++++++++++++++++----
+ vendor/anbox/products/anbox.mk                      |  7 ++++---
+ 3 files changed, 23 insertions(+), 7 deletions(-)
+ mode change 100644 => 100755 frameworks/opt/telephony/src/java/com/android/internal/telephony/PhoneFactory.java
+
+diff --git a/build/tools/buildinfo.sh b/build/tools/buildinfo.sh
+index dcb66bf..4d2eda2 100755
+--- a/build/tools/buildinfo.sh
++++ b/build/tools/buildinfo.sh
+@@ -62,4 +62,6 @@ if [ -n "$BUILD_THUMBPRINT" ] ; then
+ fi
+ echo "ro.build.characteristics=$TARGET_AAPT_CHARACTERISTICS"
+ 
++echo "ro.kernel.android.ril=yes"
++
+ echo "# end build properties"
+diff --git a/frameworks/opt/telephony/src/java/com/android/internal/telephony/PhoneFactory.java b/frameworks/opt/telephony/src/java/com/android/internal/telephony/PhoneFactory.java
+old mode 100644
+new mode 100755
+index aec3d8e..4d5727b
+--- a/frameworks/opt/telephony/src/java/com/android/internal/telephony/PhoneFactory.java
++++ b/frameworks/opt/telephony/src/java/com/android/internal/telephony/PhoneFactory.java
+@@ -33,6 +33,8 @@ import android.telephony.Rlog;
+ import android.telephony.SubscriptionManager;
+ import android.telephony.TelephonyManager;
+ import android.util.LocalLog;
++import android.util.Log;
++
+ 
+ import com.android.internal.telephony.cdma.CdmaSubscriptionSourceManager;
+ import com.android.internal.telephony.dataconnection.TelephonyNetworkFactory;
+@@ -43,11 +45,15 @@ import com.android.internal.telephony.sip.SipPhoneFactory;
+ import com.android.internal.telephony.uicc.IccCardProxy;
+ import com.android.internal.telephony.uicc.UiccController;
+ import com.android.internal.util.IndentingPrintWriter;
++import com.android.internal.telephony.test.SimulatedCommands;
++
+ 
+ import java.io.FileDescriptor;
+ import java.io.PrintWriter;
+ import java.util.HashMap;
+ 
++
++
+ /**
+  * {@hide}
+  */
+@@ -55,7 +61,7 @@ public class PhoneFactory {
+     static final String LOG_TAG = "PhoneFactory";
+     static final int SOCKET_OPEN_RETRY_MILLIS = 2 * 1000;
+     static final int SOCKET_OPEN_MAX_RETRY = 3;
+-    static final boolean DBG = false;
++    static final boolean DBG = true;
+ 
+     //***** Class Variables
+ 
+@@ -138,7 +144,8 @@ public class PhoneFactory {
+                 int numPhones = TelephonyManager.getDefault().getPhoneCount();
+                 int[] networkModes = new int[numPhones];
+                 sPhones = new Phone[numPhones];
+-                sCommandsInterfaces = new RIL[numPhones];
++                //sCommandsInterfaces = new RIL[numPhones];
++                sCommandsInterfaces = new SimulatedCommands[numPhones];
+                 sTelephonyNetworkFactories = new TelephonyNetworkFactory[numPhones];
+ 
+                 for (int i = 0; i < numPhones; i++) {
+@@ -147,8 +154,10 @@ public class PhoneFactory {
+                     networkModes[i] = RILConstants.PREFERRED_NETWORK_MODE;
+ 
+                     Rlog.i(LOG_TAG, "Network Mode set to " + Integer.toString(networkModes[i]));
+-                    sCommandsInterfaces[i] = new RIL(context, networkModes[i],
+-                            cdmaSubscription, i);
++                    //sCommandsInterfaces[i] = new RIL(context, networkModes[i],
++                    //        cdmaSubscription, i);
++                    sCommandsInterfaces[i] = new SimulatedCommands();
++                    
+                 }
+                 Rlog.i(LOG_TAG, "Creating SubscriptionController");
+                 SubscriptionController.init(context, sCommandsInterfaces);
+@@ -244,6 +253,7 @@ public class PhoneFactory {
+     public static Phone getPhone(int phoneId) {
+         Phone phone;
+         String dbgInfo = "";
++		    Log.e(LOG_TAG, "enter phonefactory::getphone !!!");
+ 
+         synchronized (sLockProxyPhones) {
+             if (!sMadeDefaults) {
+@@ -262,6 +272,9 @@ public class PhoneFactory {
+                 Rlog.d(LOG_TAG, "getPhone:- " + dbgInfo + " phoneId=" + phoneId +
+                         " phone=" + phone);
+             }
++			Log.e(LOG_TAG, "getPhone:- " + dbgInfo + " phoneId=" + phoneId +
++                        " phone=" + phone);
++			
+             return phone;
+         }
+     }
+diff --git a/vendor/anbox/products/anbox.mk b/vendor/anbox/products/anbox.mk
+index 6ae367d..1d1eb00 100644
+--- a/vendor/anbox/products/anbox.mk
++++ b/vendor/anbox/products/anbox.mk
+@@ -64,7 +64,8 @@ PRODUCT_COPY_FILES += \
+ PRODUCT_PACKAGES += \
+ 	anboxd \
+ 	hwcomposer.anbox \
+-	AnboxAppMgr
++	AnboxAppMgr \
++	rild
+ 
+ PRODUCT_PACKAGES += \
+ 	libEGL_swiftshader \
+@@ -88,8 +89,8 @@ PRODUCT_PROPERTY_OVERRIDES += \
+ 	ro.boot.container=1
+ 
+ # We don't want telephony support for now
+-PRODUCT_PROPERTY_OVERRIDES += \
+-	ro.radio.noril=yes
++#PRODUCT_PROPERTY_OVERRIDES += \
++#	ro.radio.noril=yes
+ 
+ # Disable boot-animation permanently
+ PRODUCT_PROPERTY_OVERRIDES += \
+-- 
+2.7.4
