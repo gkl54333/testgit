@@ -1,0 +1,284 @@
+From 29a03ec8943446749199b25503933b48b6036bca Mon Sep 17 00:00:00 2001
+From: gkl5433 <gkl5433@gkl5433.com>
+Date: Wed, 9 Jan 2019 16:30:05 +0800
+Subject: [PATCH 3/6] enbale bluetooth(not functionable)
+
+---
+ .../java/com/android/server/SystemServer.java      | 22 +++----
+ system/bt/hci/src/hci_layer.c                      |  4 ++
+ system/bt/vendor_libs/linux/bt_vendor_linux.c      | 28 +++++++-
+ system/bt/vendor_libs/test_vendor_lib/Android.mk   | 77 ----------------------
+ vendor/anbox/products/anbox.mk                     |  1 +
+ 5 files changed, 43 insertions(+), 89 deletions(-)
+ mode change 100644 => 100755 system/bt/hci/src/hci_layer.c
+ mode change 100644 => 100755 system/bt/vendor_libs/linux/bt_vendor_linux.c
+ delete mode 100644 system/bt/vendor_libs/test_vendor_lib/Android.mk
+
+diff --git a/frameworks/base/services/java/com/android/server/SystemServer.java b/frameworks/base/services/java/com/android/server/SystemServer.java
+index adfef84..8f004b9 100644
+--- a/frameworks/base/services/java/com/android/server/SystemServer.java
++++ b/frameworks/base/services/java/com/android/server/SystemServer.java
+@@ -656,18 +656,18 @@ public final class SystemServer {
+             // Skip Bluetooth if we have an emulator kernel
+             // TODO: Use a more reliable check to see if this product should
+             // support Bluetooth - see bug 988521
+-            if (isEmulator) {
+-                Slog.i(TAG, "No Bluetooth Service (emulator)");
+-            } else if (mFactoryTestMode == FactoryTest.FACTORY_TEST_LOW_LEVEL) {
+-                Slog.i(TAG, "No Bluetooth Service (factory test)");
+-            } else if (!context.getPackageManager().hasSystemFeature
+-                       (PackageManager.FEATURE_BLUETOOTH)) {
+-                Slog.i(TAG, "No Bluetooth Service (Bluetooth Hardware Not Present)");
+-            } else if (disableBluetooth) {
+-                Slog.i(TAG, "Bluetooth Service disabled by config");
+-            } else {
++            //if (isEmulator) {
++            //    Slog.i(TAG, "No Bluetooth Service (emulator)");
++            //} else if (mFactoryTestMode == FactoryTest.FACTORY_TEST_LOW_LEVEL) {
++            //    Slog.i(TAG, "No Bluetooth Service (factory test)");
++            //} else if (!context.getPackageManager().hasSystemFeature
++            //           (PackageManager.FEATURE_BLUETOOTH)) {
++            //    Slog.i(TAG, "No Bluetooth Service (Bluetooth Hardware Not Present)");
++            //} else if (disableBluetooth) {
++            //    Slog.i(TAG, "Bluetooth Service disabled by config");
++            //} else {
+                 mSystemServiceManager.startService(BluetoothService.class);
+-            }
++            //}
+ 
+             traceBeginAndSlog("ConnectivityMetricsLoggerService");
+             mSystemServiceManager.startService(MetricsLoggerService.class);
+diff --git a/system/bt/hci/src/hci_layer.c b/system/bt/hci/src/hci_layer.c
+old mode 100644
+new mode 100755
+index 3a45135..22d3eb8
+--- a/system/bt/hci/src/hci_layer.c
++++ b/system/bt/hci/src/hci_layer.c
+@@ -273,6 +273,7 @@ static future_t *start_up(void) {
+ 
+   LOG_DEBUG(LOG_TAG, "%s starting async portion", __func__);
+   thread_post(thread, event_finish_startup, NULL);
++  LOG_DEBUG(LOG_TAG, "%s finished", __func__);
+   return local_startup_future;
+ 
+ error:
+@@ -406,6 +407,7 @@ static void transmit_downward(data_dispatcher_type_t type, void *data) {
+ static void event_finish_startup(UNUSED_ATTR void *context) {
+   LOG_INFO(LOG_TAG, "%s", __func__);
+   hal->open();
++  LOG_DEBUG(LOG_TAG, "%s about to send_async_command", __func__);
+   vendor->send_async_command(VENDOR_CONFIGURE_FIRMWARE, NULL);
+ }
+ 
+@@ -525,6 +527,8 @@ static void fragmenter_transmit_finished(BT_HDR *packet, bool all_fragments_sent
+ }
+ 
+ static void command_timed_out(UNUSED_ATTR void *context) {
++  return;
++  
+   pthread_mutex_lock(&commands_pending_response_lock);
+ 
+   if (list_is_empty(commands_pending_response)) {
+diff --git a/system/bt/vendor_libs/linux/bt_vendor_linux.c b/system/bt/vendor_libs/linux/bt_vendor_linux.c
+old mode 100644
+new mode 100755
+index 41abc8a..73b831f
+--- a/system/bt/vendor_libs/linux/bt_vendor_linux.c
++++ b/system/bt/vendor_libs/linux/bt_vendor_linux.c
+@@ -32,6 +32,7 @@
+ #include "hci/include/bt_vendor_lib.h"
+ #include "osi/include/log.h"
+ #include "osi/include/properties.h"
++#include "osi/include/osi.h"
+ 
+ #define BTPROTO_HCI     1
+ #define HCI_CHANNEL_USER        1
+@@ -100,6 +101,8 @@ static int bt_vendor_init(const bt_vendor_callbacks_t *p_cb,
+   memcpy(bt_vendor_local_bdaddr, local_bdaddr,
+          sizeof(bt_vendor_local_bdaddr));
+ 
++ #if 0
++
+   osi_property_get("bluetooth.interface", prop_value, "0");
+ 
+   errno = 0;
+@@ -122,6 +125,14 @@ static int bt_vendor_init(const bt_vendor_callbacks_t *p_cb,
+                              prop_value, NULL) > 0 ? 1 : 0;
+   if (bt_hwcfg_en)
+     LOG_INFO(LOG_TAG, "HWCFG enabled");
++#else
++  prop_value[0] = '0';
++  hci_interface = 0;
++  rfkill_en = 0;
++  bt_hwcfg_en = 0;
++
++
++#endif
+ 
+   return 0;
+ }
+@@ -147,6 +158,8 @@ static int bt_vendor_hw_cfg(int stop)
+ 
+ static int bt_vendor_wait_hcidev(void)
+ {
++  return 0;
++  
+   struct sockaddr_hci addr;
+   struct pollfd fds[1];
+   struct mgmt_pkt ev;
+@@ -236,9 +249,10 @@ end:
+ 
+ static int bt_vendor_open(void *param)
+ {
++  return 1;
++  
+   int (*fd_array)[] = (int (*)[]) param;
+   int fd;
+-
+   LOG_INFO(LOG_TAG, "%s", __func__);
+ 
+   fd = socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_HCI);
+@@ -261,6 +275,8 @@ static int bt_vendor_open(void *param)
+ 
+ static int bt_vendor_close(void *param)
+ {
++  return 0;
++
+   (void)(param);
+ 
+   LOG_INFO(LOG_TAG, "%s", __func__);
+@@ -275,6 +291,8 @@ static int bt_vendor_close(void *param)
+ 
+ static int bt_vendor_rfkill(int block)
+ {
++  return 0;
++
+   struct rfkill_event event;
+   int fd;
+ 
+@@ -307,6 +325,9 @@ static int bt_vendor_rfkill(int block)
+ /* TODO: fw config should thread the device waiting and return immedialty */
+ static void bt_vendor_fw_cfg(void)
+ {
++  bt_vendor_callbacks->fwcfg_cb(BT_VND_OP_RESULT_SUCCESS); 
++  return;
++
+   struct sockaddr_hci addr;
+   int fd = bt_vendor_fd;
+ 
+@@ -348,6 +369,7 @@ static int bt_vendor_op(bt_vendor_opcode_t opcode, void *param)
+   int retval = 0;
+ 
+   LOG_INFO(LOG_TAG, "%s op %d", __func__, opcode);
++  
+ 
+   switch (opcode) {
+   case BT_VND_OP_POWER_CTRL:
+@@ -401,6 +423,10 @@ static int bt_vendor_op(bt_vendor_opcode_t opcode, void *param)
+   case BT_VND_OP_EPILOG:
+     bt_vendor_callbacks->epilog_cb(BT_VND_OP_RESULT_SUCCESS);
+     break;
++
++  case BT_VND_OP_A2DP_OFFLOAD_START:
++  case BT_VND_OP_A2DP_OFFLOAD_STOP:
++    break;
+   }
+ 
+   LOG_INFO(LOG_TAG, "%s op %d retval %d", __func__, opcode, retval);
+diff --git a/system/bt/vendor_libs/test_vendor_lib/Android.mk b/system/bt/vendor_libs/test_vendor_lib/Android.mk
+deleted file mode 100644
+index 3874ef2..0000000
+--- a/system/bt/vendor_libs/test_vendor_lib/Android.mk
++++ /dev/null
+@@ -1,77 +0,0 @@
+-LOCAL_PATH := $(call my-dir)
+-
+-# test-vendor shared library for target
+-# ========================================================
+-include $(CLEAR_VARS)
+-
+-BT_DIR := $(TOP_DIR)system/bt
+-
+-LOCAL_SRC_FILES := \
+-    src/bt_vendor.cc \
+-    src/command_packet.cc \
+-    src/dual_mode_controller.cc \
+-    src/event_packet.cc \
+-    src/hci_transport.cc \
+-    src/packet.cc \
+-    src/packet_stream.cc \
+-    src/test_channel_transport.cc \
+-    src/vendor_manager.cc
+-
+-# We pull in gtest because base/files/file_util.h, which is used to read the
+-# controller properties file, needs gtest/gtest_prod.h.
+-LOCAL_C_INCLUDES := \
+-    $(LOCAL_PATH)/include \
+-    $(BT_DIR) \
+-    $(BT_DIR)/hci/include \
+-    $(BT_DIR)/stack/include \
+-    $(BT_DIR)/third_party/gtest/include
+-
+-LOCAL_SHARED_LIBRARIES := \
+-    liblog \
+-    libchrome
+-
+-LOCAL_CPP_EXTENSION := .cc
+-LOCAL_MODULE := test-vendor
+-LOCAL_MODULE_TAGS := optional
+-LOCAL_MODULE_CLASS := SHARED_LIBRARIES
+-
+-LOCAL_CFLAGS += $(bluetooth_CFLAGS)
+-LOCAL_CONLYFLAGS += $(bluetooth_CONLYFLAGS)
+-LOCAL_CPPFLAGS += $(bluetooth_CPPFLAGS)
+-
+-include $(BUILD_SHARED_LIBRARY)
+-
+-# test-vendor unit tests for host
+-# ========================================================
+-ifeq ($(HOST_OS), linux)
+-include $(CLEAR_VARS)
+-
+-LOCAL_SRC_FILES := \
+-    src/command_packet.cc \
+-    src/event_packet.cc \
+-    src/hci_transport.cc \
+-    src/packet.cc \
+-    src/packet_stream.cc \
+-    test/hci_transport_unittest.cc \
+-    test/packet_stream_unittest.cc
+-
+-LOCAL_C_INCLUDES := \
+-    $(LOCAL_PATH)/include \
+-    $(BT_DIR) \
+-    $(BT_DIR)/hci/include \
+-    $(BT_DIR)/stack/include
+-
+-LOCAL_SHARED_LIBRARIES := \
+-    liblog \
+-    libchrome
+-
+-LOCAL_CPP_EXTENSION := .cc
+-LOCAL_MODULE := test-vendor_test_host
+-LOCAL_MODULE_TAGS := tests
+-
+-LOCAL_CFLAGS += $(bluetooth_CFLAGS)
+-LOCAL_CONLYFLAGS += $(bluetooth_CONLYFLAGS)
+-LOCAL_CPPFLAGS += $(bluetooth_CPPFLAGS)
+-
+-include $(BUILD_HOST_NATIVE_TEST)
+-endif
+diff --git a/vendor/anbox/products/anbox.mk b/vendor/anbox/products/anbox.mk
+index d6bc829..f6b9f22 100644
+--- a/vendor/anbox/products/anbox.mk
++++ b/vendor/anbox/products/anbox.mk
+@@ -13,6 +13,7 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ #
++BOARD_HAVE_BLUETOOTH_LINUX := true
+ 
+ PRODUCT_PACKAGES += \
+ 	egl.cfg \
+-- 
+2.7.4
